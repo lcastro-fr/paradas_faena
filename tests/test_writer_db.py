@@ -36,10 +36,12 @@ def count(db, table: str) -> int:
 
 def sample_events() -> list:
     return [
-        InputEdge(ip=IP8, tag="Cont_P1", ts=ts(10, 0, 0), value=True, reason="change"),
-        InputEdge(ip=IP8, tag="Cont_P1", ts=ts(10, 0, 30), value=False, reason="change"),
+        InputEdge(ip=IP8, tag="Cont_P1", version=1, ts=ts(10, 0, 0), value=True,
+                  reason="change"),
+        InputEdge(ip=IP8, tag="Cont_P1", version=1, ts=ts(10, 0, 30), value=False,
+                  reason="change"),
         CounterIncrement(ip=IP8, tag="Cont_P1", ts=ts(10, 0, 0), old_value=4,
-                         new_value=5, dif=1, noria_running=True, vel=42.3),
+                         new_value=5, dif=1, noria_running=True, vel=42.3, version=1),
         SpeedSample(ip="172.30.10.9", ts=ts(10, 0, 0), frec=10.0, vel=42.3,
                     noria_running=True),
         NoriaStatusEdge(ip="172.30.10.9", ts=ts(10, 0, 0), running=True),
@@ -83,7 +85,8 @@ def test_a_committed_batch_is_acknowledged(db, stream, config):
 
 def test_a_stop_lands_with_the_line_state_captured_at_read_time(db, stream, config):
     stream.publish(CounterIncrement(ip=IP8, tag="Cont_P1", ts=ts(10, 0, 0), old_value=4,
-                                    new_value=6, dif=2, noria_running=False, vel=0.0))
+                                    new_value=6, dif=2, noria_running=False,
+                                    vel=0.0, version=1))
     run_writer(stream, config, until=lambda: count(db, "paradas") == 1)
 
     with db.cursor() as cur:
@@ -100,7 +103,8 @@ def test_a_stop_lands_with_the_line_state_captured_at_read_time(db, stream, conf
 def test_unknown_line_state_is_stored_as_null_not_as_a_stale_value(db, stream, config):
     """The existing report's `where status_noria is not false` keeps these rows."""
     stream.publish(CounterIncrement(ip=IP8, tag="Cont_P1", ts=ts(10), old_value=1,
-                                    new_value=2, dif=1, noria_running=None, vel=None))
+                                    new_value=2, dif=1, noria_running=None,
+                                    vel=None, version=1))
     run_writer(stream, config, until=lambda: count(db, "paradas") == 1)
 
     with db.cursor() as cur:
@@ -164,7 +168,8 @@ def test_a_reassert_landing_on_an_existing_instant_is_absorbed(db, config):
     try:
         for reason in ("change", "reassert"):
             repo.insert_input_edges([
-                InputEdge(ip=IP8, tag="Cont_P1", ts=ts(10), value=True, reason=reason)
+                InputEdge(ip=IP8, tag="Cont_P1", version=1, ts=ts(10), value=True,
+                          reason=reason)
             ])
             repo.commit()
     finally:
@@ -197,7 +202,7 @@ def test_losing_the_database_mid_run_costs_nothing(db, stream, config):
     try:
         for n in range(20):
             stream.publish(InputEdge(ip=IP8, tag="Cont_P1", ts=ts(10, 0, n),
-                                     value=bool(n % 2), reason="change"))
+                                     value=bool(n % 2), reason="change", version=1))
         deadline = time.monotonic() + 15
         while count(db, "input_status") < 20 and time.monotonic() < deadline:
             time.sleep(0.02)
@@ -212,7 +217,7 @@ def test_losing_the_database_mid_run_costs_nothing(db, stream, config):
 
         for n in range(20, 40):
             stream.publish(InputEdge(ip=IP8, tag="Cont_P1", ts=ts(10, 1, n - 20),
-                                     value=bool(n % 2), reason="change"))
+                                     value=bool(n % 2), reason="change", version=1))
 
         deadline = time.monotonic() + 25
         while count(db, "input_status") < 40 and time.monotonic() < deadline:
@@ -230,8 +235,9 @@ def test_one_rejected_event_does_not_block_the_rest_of_its_batch(db, stream, con
     """A tag absent from counters_name violates the foreign key. Retrying it forever
     would stall every event behind it, so it is parked on the rejected stream."""
     good = [InputEdge(ip=IP8, tag="Cont_P1", ts=ts(10, 0, n), value=bool(n % 2),
-                      reason="change") for n in range(6)]
-    poison = InputEdge(ip=IP8, tag="NO_EXISTE", ts=ts(10, 5), value=True, reason="change")
+                      reason="change", version=1) for n in range(6)]
+    poison = InputEdge(ip=IP8, tag="NO_EXISTE", version=1, ts=ts(10, 5), value=True,
+                       reason="change")
     stream.publish_many([*good[:3], poison, *good[3:]])
 
     run_writer(stream, config, until=lambda: count(db, "input_status") == 6)
@@ -250,7 +256,7 @@ def test_isolation_leaves_the_batch_pending_if_the_connection_dies(db, stream, c
     shutdown = threading.Event()
     writer = Writer(stream, config, shutdown)
     events = [InputEdge(ip=IP8, tag="Cont_P1", ts=ts(10, 0, n), value=bool(n % 2),
-                        reason="change") for n in range(8)]
+                        reason="change", version=1) for n in range(8)]
 
     assert writer._isolate(events) is False        # no connection was ever opened
     assert count(db, "input_status") == 0
@@ -349,3 +355,42 @@ def test_a_batch_committed_but_never_acked_is_not_duplicated_on_replay(db, strea
     after = {t: count(db, t) for t in before}
     assert after == before, "el replay duplico filas"
     assert stream.pending_count() == 0
+
+
+def test_load_counters_returns_only_the_live_version(db, config):
+    """The daemon must read the newest configuration, and stamp that version on every
+    event -- otherwise a rewiring would be recorded against the old input mapping."""
+    with db.cursor() as cur:
+        cur.execute(
+            f"""insert into {SCHEMA}.counters_name
+                    (ip, tag, name, input_tag, version)
+                values (%s, 'Cont_P1', 'Puesto 1', '_IO_P1_DI_02', 2)""",
+            (IP8,),
+        )
+    try:
+        repo = Repository.connect(config.db)
+        try:
+            rows = [c for c in repo.load_counters() if c.tag == "Cont_P1"]
+        finally:
+            repo.close()
+
+        assert len(rows) == 1, "se devolvieron varias versiones del mismo puesto"
+        assert rows[0].version == 2
+        assert rows[0].input_tag == "_IO_P1_DI_02"
+    finally:
+        with db.cursor() as cur:
+            cur.execute(
+                f"delete from {SCHEMA}.counters_name where ip = %s and tag = 'Cont_P1' "
+                f"and version = 2", (IP8,),
+            )
+
+
+def test_an_event_is_stored_against_the_version_it_carries(db, stream, config):
+    stream.publish(
+        InputEdge(ip=IP8, tag="Cont_P1", version=1, ts=ts(10), value=True,
+                  reason="change")
+    )
+    run_writer(stream, config, until=lambda: count(db, "input_status") == 1)
+    with db.cursor() as cur:
+        cur.execute(f"select version from {SCHEMA}.input_status")
+        assert cur.fetchone() == (1,)

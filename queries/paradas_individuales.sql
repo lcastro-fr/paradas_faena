@@ -7,11 +7,19 @@
 --
 -- Parameters: %(desde)s, %(hasta)s, %(max_segment)s.
 
+-- The join carries `version`, so each row matches exactly the configuration it was
+-- recorded under. On (ip, tag) alone a row pairs with every version of its puesto, and
+-- the segment that survives takes an arbitrary one's name -- time recorded under the
+-- old wiring then gets reported under the new puesto's name.
+-- The window still partitions by (ip, tag) only: a relay held across a rewiring is one
+-- continuous timeline, and the resync row the daemon writes on restart closes the last
+-- segment of the old version.
+
 with seg as (
     select s.ip, s.tag, cn.name, s.value, s.ts,
            lead(s.ts) over (partition by s.ip, s.tag order by s.ts) as next_ts
     from paradas_faena.input_status s
-    join paradas_faena.counters_name cn using (ip, tag)
+    join paradas_faena.counters_name cn using (ip, tag, version)
     where s.ts >= %(desde)s - interval '1 hour'
       and s.ts <  %(hasta)s
 ),

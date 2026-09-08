@@ -24,13 +24,17 @@ pytestmark = [requires_db, requires_redis]
 
 IP9 = "172.30.10.9"
 PLC_9 = PlcConfig(ip=IP9, nombre="PLC 09", variador=True)
-COUNTERS_9 = [CounterConfig(ip=IP9, tag="Cont_P3", name="Puesto 3", input_index=0)]
+COUNTERS_9 = [
+    CounterConfig(ip=IP9, tag="Cont_P3", name="Puesto 3",
+                  input_tag="_IO_EM_DI_00", version=1)
+]
 
 
 class ScriptedPlc:
     def __init__(self) -> None:
         self.counter = 5
-        self.relay = False
+        # Logical intent; read() converts it to the wire level (normally closed).
+        self.stop_requested = False
         self.frec = 10.0
         self.running = True
 
@@ -43,7 +47,7 @@ class ScriptedPlc:
     def read(self, names):
         return {
             "Cont_P3": self.counter,
-            "InputStatus{1}": [self.relay],
+            "_IO_EM_DI_00": not self.stop_requested,
             "frec": self.frec,
             "status": self.running,
         }
@@ -68,11 +72,11 @@ def test_a_stop_flows_from_the_plc_through_redis_to_the_duration_query(db, strea
     try:
         time.sleep(0.15)          # line running, relay open
 
-        plc.relay = True          # workstation requests the stop
+        plc.stop_requested = True  # el puesto pide la parada: el relay abre
         plc.counter = 6
         time.sleep(0.45)          # held long enough for several re-asserts
 
-        plc.relay = False
+        plc.stop_requested = False
         time.sleep(0.25)
     finally:
         shutdown.set()

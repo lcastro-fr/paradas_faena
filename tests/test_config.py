@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import math
 
 import pytest
 
@@ -23,7 +24,7 @@ _ALL = [
     *REQUIRED, "HOST", "DBNAME", "PASSWORD", "SCHEMA", "USER", "DB_PORT", "NORIA_CONV",
     "POLL_SECONDS", "REASSERT_SECONDS", "HEARTBEAT_SECONDS", "STATUS_GRACE_SECONDS",
     "SPEED_DEADBAND_HZ", "SPEED_MAX_INTERVAL_SECONDS", "STOPFILE_POLL_SECONDS",
-    "TAG_INPUT_ARRAY", "TAG_FREC", "TAG_STATUS", "BATCH_MAX_EVENTS",
+    "TAG_FREC", "TAG_STATUS", "BATCH_MAX_EVENTS",
     "REDIS_URL", "REDIS_STREAM", "REDIS_GROUP", "REDIS_CONSUMER", "REDIS_MAXLEN",
     "REDIS_BLOCK_MS", "PUBLISH_BUFFER_SIZE",
     "BACKOFF_INITIAL_SECONDS", "BACKOFF_MAX_SECONDS", "SHUTDOWN_GRACE_SECONDS",
@@ -55,7 +56,6 @@ def test_minimal_environment_loads_with_defaults(env):
     assert config.db.port == 5432
     assert config.poll_seconds == 0.5
     assert config.reassert_seconds == 60.0
-    assert config.input_array_tag == "InputStatus"
     assert config.noria_conv == 4.23
 
 
@@ -135,6 +135,33 @@ def test_the_cap_always_exceeds_the_interval_it_is_derived_from(env):
         assert config.max_segment().total_seconds() > seconds
 
 
+def test_the_cap_also_accounts_for_the_poll_interval(env):
+    """The error is one poll interval, not a percentage of the re-assert interval.
+
+    The row is rewritten on the first tick at or after reassert_seconds, so a live
+    segment is reassert rounded up to the next multiple of poll. A cap derived only from
+    reassert (the old `reassert * 1.05 + 1`) breaks as soon as poll is a meaningful
+    fraction of it -- reassert=10 with poll=3 gives a real segment of 12 s against a cap
+    of 11.5 s, truncating half a second on every re-assert.
+    """
+    for reassert, poll in [
+        (60, 0.5), (60, 1.5), (60, 7), (60, 11),
+        (30, 4), (10, 1.5), (10, 3), (10, 9),
+    ]:
+        config = env(REASSERT_SECONDS=str(reassert), POLL_SECONDS=str(poll))
+        worst = math.ceil(reassert / poll) * poll
+        assert config.max_segment().total_seconds() > worst, (
+            f"REASSERT={reassert} POLL={poll}: tope "
+            f"{config.max_segment().total_seconds()} <= segmento real {worst}"
+        )
+
+
+def test_a_slower_poll_raises_the_cap(env):
+    slow = env(REASSERT_SECONDS="60", POLL_SECONDS="5").max_segment()
+    fast = env(REASSERT_SECONDS="60", POLL_SECONDS="0.5").max_segment()
+    assert slow > fast
+
+
 # --- Redis ----------------------------------------------------------------------------
 
 
@@ -170,3 +197,4 @@ def test_an_absurdly_small_stream_cap_is_rejected(env):
     """A cap near the batch size would trim entries before the writer could read them."""
     with pytest.raises(ConfigError, match="REDIS_MAXLEN"):
         env(REDIS_MAXLEN="10")
+

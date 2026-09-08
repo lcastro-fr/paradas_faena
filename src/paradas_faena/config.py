@@ -48,6 +48,7 @@ def _optional(name: str, default: str) -> str:
     return default if value is None or value == "" else value
 
 
+
 def _float(name: str, default: float, *, minimum: float | None = None) -> float:
     raw = _optional(name, str(default))
     try:
@@ -109,7 +110,6 @@ class Config:
     db: DbConfig
     redis: RedisConfig
 
-    input_array_tag: str
     frec_tag: str
     status_tag: str
 
@@ -134,12 +134,29 @@ class Config:
     def max_segment(self) -> dt.timedelta:
         """The segment cap for the duration queries.
 
-        Coupled to reassert_seconds: while a relay reads true a row is written every
-        reassert_seconds, so a live segment never exceeds it and anything longer is a data
-        gap. Pass this to the queries as %(max_segment)s instead of hardcoding an interval
-        in the SQL -- if the two disagree, real stop time is silently truncated.
+        While a relay reads true the daemon rewrites its row on the first tick at or
+        after reassert_seconds, so a live segment is reassert_seconds rounded *up* to the
+        next multiple of poll_seconds -- up to a whole poll longer:
+
+            segmento real = ceil(reassert_seconds / poll_seconds) * poll_seconds
+
+        The cap has to clear that. If it does not, every re-assert loses the difference,
+        always downwards, and long stops are under-reported. The extra second covers
+        jitter.
+
+        This is why the cap depends on poll_seconds and not on a percentage of
+        reassert_seconds: the error is one poll interval, which has nothing to do with
+        how long reassert_seconds is.
+
+        One caveat: if a read takes longer than poll_seconds, the tick spacing becomes
+        the read time and this bound no longer holds. Keep POLL_SECONDS above the read
+        time tools/probe_read.py reports -- on the Micro820s that is 300-525 ms.
+
+        Pass it to the queries as %(max_segment)s; never hardcode an interval in the SQL.
         """
-        return dt.timedelta(seconds=self.reassert_seconds * 1.05 + 1.0)
+        return dt.timedelta(
+            seconds=self.reassert_seconds + self.poll_seconds + 1.0
+        )
 
     def heartbeat_interval(self) -> dt.timedelta:
         return dt.timedelta(seconds=self.heartbeat_seconds)
@@ -182,7 +199,6 @@ def load_config(*, dotenv: bool = True) -> Config:
     return Config(
         db=db,
         redis=redis_config,
-        input_array_tag=_optional("TAG_INPUT_ARRAY", "InputStatus"),
         frec_tag=_optional("TAG_FREC", "frec"),
         status_tag=_optional("TAG_STATUS", "status"),
         poll_seconds=poll,

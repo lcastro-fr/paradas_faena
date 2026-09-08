@@ -60,12 +60,13 @@ def load_topology(
         log.error("counters_name referencia PLCs ausentes de la tabla plcs: %s", orphans)
 
     for plc in plcs:
-        mapped = sum(1 for c in by_ip.get(plc.ip, []) if c.input_index is not None)
+        mapped = sum(1 for c in by_ip.get(plc.ip, []) if c.input_tag is not None)
         log.info(
-            "PLC %s (%s)%s: %d contadores, %d con input_index",
+            "PLC %s (%s)%s: %d contadores, %d con input_tag, version %s",
             plc.ip, plc.nombre or "sin nombre",
             " [variador]" if plc.variador else "",
             len(by_ip.get(plc.ip, [])), mapped,
+            sorted({c.version for c in by_ip.get(plc.ip, [])}) or "-",
         )
 
     variadores = [p.ip for p in plcs if p.variador]

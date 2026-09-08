@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+import psycopg
 import pytest
 from tests.conftest import MAX_SEGMENT, SCHEMA, requires_db, ts
 
@@ -20,8 +21,9 @@ IP9 = "172.30.10.9"
 def put(db, ip: str, tag: str, rows: list[tuple[dt.datetime, bool]]) -> None:
     with db.cursor() as cur:
         cur.executemany(
-            f"insert into {SCHEMA}.input_status (ip, tag, ts, value) values (%s,%s,%s,%s)",
-            [(ip, tag, when, value) for when, value in rows],
+            f"insert into {SCHEMA}.input_status (ip, tag, version, ts, value) "
+            f"values (%s,%s,%s,%s,%s)",
+            [(ip, tag, 1, when, value) for when, value in rows],
         )
 
 
@@ -295,3 +297,161 @@ def test_a_plc_that_never_reported_is_still_listed_with_zero(db, query):
     assert set(result) == {IP8, IP9}
     assert result[IP8][2] == 0
     assert result[IP8][4] is None            # primer_latido
+
+
+# --------------------------------------------------------------------------------------
+# versioned configuration
+# --------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def rewired(db):
+    """Cont_P1 rewired: version 1 on _IO_EM_DI_00, version 2 on _IO_P1_DI_02.
+
+    Both rows coexist because the unique index is on (ip, input_tag, version).
+    """
+    with db.cursor() as cur:
+        cur.execute(
+            f"""insert into {SCHEMA}.counters_name
+                    (ip, tag, name, input_tag, version)
+                values (%s, 'Cont_P1', 'Puesto 1', '_IO_P1_DI_02', 2)""",
+            (IP8,),
+        )
+    yield
+    with db.cursor() as cur:
+        cur.execute(f"truncate {SCHEMA}.input_status")
+        cur.execute(
+            f"delete from {SCHEMA}.counters_name where ip = %s and tag = 'Cont_P1' "
+            f"and version = 2",
+            (IP8,),
+        )
+
+
+def put_v(db, ip, tag, version, rows):
+    with db.cursor() as cur:
+        cur.executemany(
+            f"insert into {SCHEMA}.input_status (ip, tag, version, ts, value) "
+            f"values (%s,%s,%s,%s,%s)",
+            [(ip, tag, version, when, value) for when, value in rows],
+        )
+
+
+def test_two_versions_of_a_puesto_do_not_multiply_its_duration(db, rewired, query):
+    """The trap this whole change had to avoid.
+
+    With `using (ip, tag)` the join would match both counters_name rows for every
+    input_status row and double every duration, silently.
+    """
+    put_v(db, IP8, "Cont_P1", 1, [(ts(10, 0, 0), True), (ts(10, 0, 30), False)])
+
+    result = totals(db, query("tiempo_parada_por_puesto"), ts(6), ts(18))
+    assert result == {"Puesto 1": 30.0}
+
+
+def test_each_row_is_attributed_to_the_configuration_it_was_recorded_under(db, query):
+    """Rewiring must not retroactively reinterpret history: the two versions carry
+    different puesto names, and each row follows its own."""
+    with db.cursor() as cur:
+        cur.execute(
+            f"""insert into {SCHEMA}.counters_name
+                    (ip, tag, name, input_tag, version)
+                values (%s, 'Cont_P1', 'Puesto 1 (recableado)', '_IO_P1_DI_02', 2)""",
+            (IP8,),
+        )
+    try:
+        put_v(db, IP8, "Cont_P1", 1, [(ts(10, 0, 0), True), (ts(10, 0, 30), False)])
+        put_v(db, IP8, "Cont_P1", 2, [(ts(12, 0, 0), True), (ts(12, 0, 45), False)])
+
+        result = totals(db, query("tiempo_parada_por_puesto"), ts(6), ts(18))
+        assert result == {"Puesto 1": 30.0, "Puesto 1 (recableado)": 45.0}
+    finally:
+        with db.cursor() as cur:
+            cur.execute(f"truncate {SCHEMA}.input_status")
+            cur.execute(
+                f"delete from {SCHEMA}.counters_name where ip = %s and tag = 'Cont_P1' "
+                f"and version = 2", (IP8,),
+            )
+
+
+def test_a_same_named_puesto_keeps_one_total_across_a_rewiring(db, rewired, query):
+    """Only the wiring changed, so the name is the same and the totals merge."""
+    put_v(db, IP8, "Cont_P1", 1, [(ts(10, 0, 0), True), (ts(10, 0, 30), False)])
+    put_v(db, IP8, "Cont_P1", 2, [(ts(12, 0, 0), True), (ts(12, 0, 20), False)])
+
+    assert totals(db, query("tiempo_parada_por_puesto"), ts(6), ts(18)) == {
+        "Puesto 1": 50.0
+    }
+
+
+def test_a_relay_held_across_a_rewiring_is_one_continuous_segment(db, rewired, query):
+    """The window partitions by (ip, tag) only, so the resync row the daemon writes on
+    restart closes the last segment of the old version instead of leaving it open."""
+    put_v(db, IP8, "Cont_P1", 1, [(ts(10, 0, 0), True)])
+    put_v(db, IP8, "Cont_P1", 2, [(ts(10, 0, 40), False)])
+
+    result = totals(db, query("tiempo_parada_por_puesto"), ts(6), ts(18))
+    assert result["Puesto 1"] == pytest.approx(40.0)
+
+
+def test_an_input_tag_may_be_reused_by_a_later_version(db, query):
+    """Freeing an input in v1 and giving it to another puesto in v2 has to be legal."""
+    with db.cursor() as cur:
+        cur.execute(
+            f"""insert into {SCHEMA}.counters_name
+                    (ip, tag, name, input_tag, version)
+                values (%s, 'Cont_P2', 'Puesto 2', '_IO_EM_DI_00', 2)""",
+            (IP8,),
+        )
+        cur.execute(
+            f"select count(*) from {SCHEMA}.counters_name "
+            f"where ip = %s and input_tag = '_IO_EM_DI_00'", (IP8,),
+        )
+        assert cur.fetchone()[0] == 2
+        cur.execute(
+            f"delete from {SCHEMA}.counters_name where ip = %s and tag = 'Cont_P2' "
+            f"and version = 2", (IP8,),
+        )
+
+
+def test_the_same_input_tag_twice_in_one_version_is_rejected(db):
+    """Within a version the mapping must stay one-to-one."""
+    with pytest.raises(psycopg.errors.UniqueViolation), db.cursor() as cur:
+        cur.execute(
+            f"""insert into {SCHEMA}.counters_name
+                        (ip, tag, name, input_tag, version)
+                    values (%s, 'Cont_P9', 'Puesto 9', '_IO_EM_DI_00', 1)""",
+            (IP8,),
+        )
+
+
+def test_time_is_not_reported_under_a_version_it_was_never_recorded_under(db, query):
+    """The defect the version in the join actually prevents.
+
+    Cont_P1 is rewired and renamed, but nothing has been recorded under version 2 yet.
+    Joining on (ip, tag) alone pairs the version-1 rows with both configurations and
+    hands the surviving segment the version-2 name, so 30 s of "Puesto 1" is reported
+    as "Puesto Nuevo". It is misattribution, not duplication -- the total stays 30 s.
+    """
+    with db.cursor() as cur:
+        cur.execute(
+            f"""insert into {SCHEMA}.counters_name
+                    (ip, tag, name, input_tag, version)
+                values (%s, 'Cont_P1', 'Puesto Nuevo', '_IO_P1_DI_02', 2)""",
+            (IP8,),
+        )
+    try:
+        put_v(db, IP8, "Cont_P1", 1, [(ts(10, 0, 0), True), (ts(10, 0, 30), False)])
+
+        correct = query("tiempo_parada_por_puesto")
+        assert totals(db, correct, ts(6), ts(18)) == {"Puesto 1": 30.0}
+
+        # Same data, version dropped from the join: the time lands on the wrong puesto.
+        broken = correct.replace("using (ip, tag, version)", "using (ip, tag)")
+        assert totals(db, broken, ts(6), ts(18)) == {"Puesto Nuevo": 30.0}
+    finally:
+        with db.cursor() as cur:
+            cur.execute(f"truncate {SCHEMA}.input_status")
+            cur.execute(
+                f"delete from {SCHEMA}.counters_name where ip = %s and tag = 'Cont_P1' "
+                f"and version = 2", (IP8,),
+            )

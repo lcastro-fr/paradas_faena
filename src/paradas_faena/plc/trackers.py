@@ -2,17 +2,26 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
+from typing import NamedTuple
 
 from ..events import CounterIncrement, Heartbeat, InputEdge, NoriaStatusEdge, SpeedSample
 
 log = logging.getLogger(__name__)
 
 
+class InputBinding(NamedTuple):
+    """What a PLC input tag maps to: a puesto's counter tag, at a config version."""
+
+    counter_tag: str
+    version: int
+
+
 class CounterTracker:
-    def __init__(self, ip: str, tags: Sequence[str]) -> None:
+    def __init__(self, ip: str, versions: Mapping[str, int]) -> None:
         self.ip = ip
-        self._last: dict[str, int | None] = dict.fromkeys(tags)
+        self._versions = dict(versions)
+        self._last: dict[str, int | None] = dict.fromkeys(versions)
 
     def reset(self) -> None:
         """Forget the last values so the next reading re-seeds without emitting.
@@ -54,6 +63,7 @@ class CounterTracker:
                 CounterIncrement(
                     ip=self.ip,
                     tag=tag,
+                    version=self._versions[tag],
                     ts=ts,
                     old_value=old,
                     new_value=new,
@@ -67,63 +77,86 @@ class CounterTracker:
 
 
 class InputTracker:
-    """Turns the InputStatus relay array into a timeline of transitions.
+    """Turns the per-puesto stop inputs into a timeline of transitions.
 
-    Emits on a flip, and re-emits every reassert_seconds while a relay reads true. The
+    Keyed by the input's own tag name (counters_name.input_tag) because the
+    controllers are Micro820s, which expose each digital input as its own BOOL rather
+    than as a position in an array.
+
+    The relays are normally closed, so the PLC reads 1 while a puesto is clear and 0
+    while it is holding the line. The tracker inverts that, so every InputEdge -- and
+    therefore every input_status row -- means "true = pidiendo parada" regardless of how
+    the input is wired. The reporting queries depend on it: they sum `where value`.
+
+    Emits on a flip, and re-emits every reassert_seconds while a stop is held. The
     re-asserts bound a live `true` segment, which is what lets the duration queries
     recognise a longer segment as a data gap and cap it.
     """
 
     def __init__(
-        self, ip: str, index_to_tag: Mapping[int, str], reassert_seconds: float
+        self, ip: str, inputs: Mapping[str, InputBinding], reassert_seconds: float
     ) -> None:
         self.ip = ip
-        self._index_to_tag = dict(index_to_tag)
+        # The event carries the counter tag and version, because input_status has a
+        # foreign key on counters_name (ip, tag, version).
+        self._inputs = dict(inputs)
         self._reassert = dt.timedelta(seconds=reassert_seconds)
         self._last_value: dict[str, bool] = {}
         self._last_written: dict[str, dt.datetime] = {}
         self._needs_resync = True
-        self._warned_short_array = False
+        self._warned_missing: set[str] = set()
 
     @property
-    def array_size(self) -> int:
-        return max(self._index_to_tag) + 1 if self._index_to_tag else 0
+    def input_tags(self) -> tuple[str, ...]:
+        """The PLC tags this tracker needs read, in configured order."""
+        return tuple(self._inputs)
 
     def reset(self) -> None:
         self._needs_resync = True
 
-    def observe(self, array: Sequence[object], ts: dt.datetime) -> list[InputEdge]:
-        if len(array) < self.array_size and not self._warned_short_array:
-            log.error(
-                "%s: el array de inputs devolvio %d elementos, se esperaban al menos "
-                "%d; revisar input_index en counters_name",
-                self.ip,
-                len(array),
-                self.array_size,
-            )
-            self._warned_short_array = True
-
+    def observe(self, values: Mapping[str, object], ts: dt.datetime) -> list[InputEdge]:
         resync = self._needs_resync
         events: list[InputEdge] = []
 
-        for index, tag in self._index_to_tag.items():
-            if index >= len(array):
+        for input_tag, binding in self._inputs.items():
+            counter_tag = binding.counter_tag
+            if input_tag not in values:
+                if input_tag not in self._warned_missing:
+                    log.error(
+                        "%s: no vino el input %s (puesto %s); revisar "
+                        "counters_name.input_tag",
+                        self.ip,
+                        input_tag,
+                        counter_tag,
+                    )
+                    self._warned_missing.add(input_tag)
                 continue
-            value = bool(array[index])
-            previous = self._last_value.get(tag)
+
+            # Normally closed: 1 on the wire means the puesto is clear.
+            value = not bool(values[input_tag])
+            previous = self._last_value.get(counter_tag)
 
             if resync or previous is None:
                 reason = "resync"
             elif value != previous:
                 reason = "change"
-            elif value and ts - self._last_written.get(tag, ts) >= self._reassert:
+            elif value and ts - self._last_written.get(counter_tag, ts) >= self._reassert:
                 reason = "reassert"
             else:
                 continue
 
-            events.append(InputEdge(ip=self.ip, tag=tag, ts=ts, value=value, reason=reason))
-            self._last_value[tag] = value
-            self._last_written[tag] = ts
+            events.append(
+                InputEdge(
+                    ip=self.ip,
+                    tag=counter_tag,
+                    version=binding.version,
+                    ts=ts,
+                    value=value,
+                    reason=reason,
+                )
+            )
+            self._last_value[counter_tag] = value
+            self._last_written[counter_tag] = ts
 
         self._needs_resync = False
         return events

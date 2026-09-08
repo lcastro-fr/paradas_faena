@@ -36,7 +36,7 @@ def ids_of(batch):
 def test_publish_and_read_round_trips_every_event_type(stream):
     published = [
         beat(0),
-        InputEdge(ip=IP, tag="Cont_P1", ts=T0, value=True, reason="change"),
+        InputEdge(ip=IP, tag="Cont_P1", ts=T0, value=True, reason="change", version=1),
         SessionClosed(fecha=dt.date(2026, 9, 7), hora_inicio=dt.time(6, 2),
                       hora_fin=dt.time(16, 14), registros=1200),
     ]

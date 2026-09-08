@@ -16,6 +16,7 @@ from .client import PlcClient, PlcReadError
 from .trackers import (
     CounterTracker,
     HeartbeatTracker,
+    InputBinding,
     InputTracker,
     NoriaStatusTracker,
     SpeedTracker,
@@ -43,11 +44,15 @@ class PlcWorker(ManagedThread):
         self._cfg = config
         self._shutdown = shutdown
 
-        self._counter_tags = [c.tag for c in counters]
-        index_to_tag = {c.input_index: c.tag for c in counters if c.input_index is not None}
+        # tag -> live config version, and input tag -> (counter tag, version)
+        self._counter_versions = {c.tag: c.version for c in counters}
+        self._input_bindings = {
+            c.input_tag: InputBinding(c.tag, c.version) for c in counters if c.input_tag
+        }
+        self._counter_tags = list(self._counter_versions)
 
-        self._counters = CounterTracker(plc.ip, self._counter_tags)
-        self._inputs = InputTracker(plc.ip, index_to_tag, config.reassert_seconds)
+        self._counters = CounterTracker(plc.ip, self._counter_versions)
+        self._inputs = InputTracker(plc.ip, self._input_bindings, config.reassert_seconds)
         self._heartbeat = HeartbeatTracker(plc.ip, config.heartbeat_seconds)
         self._status = NoriaStatusTracker(plc.ip) if plc.variador else None
         self._speed = (
@@ -61,21 +66,19 @@ class PlcWorker(ManagedThread):
             else None
         )
 
-        self._input_request: str | None = None
-        if self._inputs.array_size:
-            self._input_request = f"{config.input_array_tag}{{{self._inputs.array_size}}}"
-        else:
+        if not self._input_bindings:
             log.warning(
-                "%s: ningun counters_name.input_index configurado; no se registraran "
+                "%s: ningun counters_name.input_tag configurado; no se registraran "
                 "tiempos de parada para este PLC",
                 plc.ip,
             )
 
-        self._read_names: list[str] = list(self._counter_tags)
-        if self._input_request:
-            self._read_names.append(self._input_request)
+        names = [*self._counter_tags, *self._input_bindings]
         if plc.variador:
-            self._read_names += [config.frec_tag, config.status_tag]
+            names += [config.frec_tag, config.status_tag]
+        # Deduplicated: these are Micro820s, so pycomm3 sends one request per tag and
+        # asking twice for the same one costs a whole round trip.
+        self._read_names: list[str] = list(dict.fromkeys(names))
 
     def run(self) -> None:
         backoff = Backoff(self._cfg.backoff_initial_seconds, self._cfg.backoff_max_seconds)
@@ -165,7 +168,7 @@ class PlcWorker(ManagedThread):
             self._counters.observe(counter_values, ts, noria_running, vel)
         )
 
-        if self._input_request:
-            self._stream.publish_many(self._inputs.observe(values[self._input_request], ts))
+        if self._input_bindings:
+            self._stream.publish_many(self._inputs.observe(values, ts))
 
         self._stream.publish_many(self._heartbeat.observe(ts))

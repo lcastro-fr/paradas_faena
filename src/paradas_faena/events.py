@@ -34,6 +34,7 @@ class CounterIncrement(Event):
 
     ip: str
     tag: str
+    version: int
     ts: dt.datetime
     old_value: int
     new_value: int
@@ -55,6 +56,7 @@ class InputEdge(Event):
 
     ip: str
     tag: str
+    version: int
     ts: dt.datetime
     value: bool
     reason: str = "change"

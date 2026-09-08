@@ -76,10 +76,11 @@ def _build_schema(conn) -> None:
                    ('172.30.10.9', 'PLC 09', true)"""
         )
         cur.execute(
-            f"""insert into {SCHEMA}.counters_name (ip, tag, name, input_index) values
-                   ('172.30.10.8', 'Cont_P1', 'Puesto 1', 0),
-                   ('172.30.10.8', 'Cont_P2', 'Puesto 2', 1),
-                   ('172.30.10.9', 'Cont_P3', 'Puesto 3', 0)"""
+            f"""insert into {SCHEMA}.counters_name
+                       (ip, tag, name, input_tag, version) values
+                   ('172.30.10.8', 'Cont_P1', 'Puesto 1', '_IO_EM_DI_00', 1),
+                   ('172.30.10.8', 'Cont_P2', 'Puesto 2', '_IO_EM_DI_01', 1),
+                   ('172.30.10.9', 'Cont_P3', 'Puesto 3', '_IO_EM_DI_00', 1)"""
         )
 
 
@@ -137,10 +138,13 @@ def ts(hour: int, minute: int = 0, second: int = 0) -> dt.datetime:
     return dt.datetime(2026, 9, 7, hour, minute, second, tzinfo=TZ)
 
 
-# REASSERT_SECONDS=60 in the tests, so the query's segment cap is 60*1.05+1 = 64 s.
-# Config.max_segment() is the single source of this in production; the tests recompute it
-# the same way rather than hardcoding an interval.
-MAX_SEGMENT = dt.timedelta(seconds=60 * 1.05 + 1.0)
+# The timings the `config` fixture uses, and the cap they imply. Kept here so the
+# constant and the fixture cannot drift apart; the formula matches Config.max_segment().
+TEST_POLL_SECONDS = 0.5
+TEST_REASSERT_SECONDS = 60.0
+MAX_SEGMENT = dt.timedelta(
+    seconds=TEST_REASSERT_SECONDS + TEST_POLL_SECONDS + 1.0
+)
 
 
 @pytest.fixture
@@ -170,8 +174,9 @@ def config(tmp_path, stream_names):
     )
     return Config(
         db=db, redis=redis_config,
-        input_array_tag="InputStatus", frec_tag="frec", status_tag="status",
-        poll_seconds=0.5, reassert_seconds=60.0, heartbeat_seconds=60.0,
+        frec_tag="frec", status_tag="status",
+        poll_seconds=TEST_POLL_SECONDS, reassert_seconds=TEST_REASSERT_SECONDS,
+        heartbeat_seconds=60.0,
         status_grace_seconds=30.0, noria_conv=4.23, speed_deadband_hz=0.2,
         speed_max_interval_seconds=60.0, edu_path=tmp_path, stopfile_poll_seconds=0.05,
         batch_max_events=100,

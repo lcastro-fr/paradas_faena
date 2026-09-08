@@ -33,7 +33,12 @@ class CounterConfig:
     ip: str
     tag: str
     name: str | None
-    input_index: int | None
+    # The tag name of this puesto's stop input, e.g. '_IO_EM_DI_00'. The controllers are
+    # Micro820s: each digital input is its own BOOL, not a position in an array.
+    input_tag: str | None
+    # Configuration generation. Rewiring inserts a new version; rows already recorded
+    # keep pointing at the one that was true when they were read.
+    version: int
 
 
 def local_parts(ts: dt.datetime) -> tuple[dt.date, dt.time]:
@@ -88,13 +93,19 @@ class Repository:
         with self._conn.cursor() as cur:
             cur.execute(
                 self._q(
-                    "select host(ip), tag, name, input_index "
-                    "from {schema}.counters_name order by ip, input_index nulls last, tag"
+                    # The highest version per (ip, tag) is the live configuration.
+                    "select distinct on (ip, tag) "
+                    "  host(ip), tag, name, input_tag, version "
+                    "from {schema}.counters_name "
+                    "order by ip, tag, version desc"
                 )
             )
             rows = cur.fetchall()
         self._conn.commit()
-        return [CounterConfig(ip=r[0], tag=r[1], name=r[2], input_index=r[3]) for r in rows]
+        return [
+            CounterConfig(ip=r[0], tag=r[1], name=r[2], input_tag=r[3], version=r[4])
+            for r in rows
+        ]
 
     # -- writes ----------------------------------------------------------------------
 
@@ -108,6 +119,7 @@ class Repository:
                 (
                     e.ip,
                     e.tag,
+                    e.version,
                     e.old_value,
                     e.new_value,
                     e.dif,
@@ -122,9 +134,9 @@ class Repository:
             cur.executemany(
                 self._q(
                     "insert into {schema}.paradas "
-                    "(ip, tag, old_value, new_value, dif, fecha, hora, "
+                    "(ip, tag, version, old_value, new_value, dif, fecha, hora, "
                     " status_noria, vel, event_uid) "
-                    "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                     "on conflict (event_uid) do nothing"
                 ),
                 params,
@@ -140,11 +152,11 @@ class Repository:
         with self._conn.cursor() as cur:
             cur.executemany(
                 self._q(
-                    "insert into {schema}.input_status (ip, tag, ts, value) "
-                    "values (%s, %s, %s, %s) "
+                    "insert into {schema}.input_status (ip, tag, version, ts, value) "
+                    "values (%s, %s, %s, %s, %s) "
                     "on conflict (ip, tag, ts) do nothing"
                 ),
-                [(e.ip, e.tag, e.ts, e.value) for e in events],
+                [(e.ip, e.tag, e.version, e.ts, e.value) for e in events],
             )
 
     def insert_speed(self, events: list[SpeedSample]) -> None:

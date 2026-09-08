@@ -34,10 +34,15 @@ PLC_8 = PlcConfig(ip=IP8, nombre="PLC 08", variador=False)
 PLC_9 = PlcConfig(ip=IP9, nombre="PLC 09", variador=True)
 
 COUNTERS_8 = [
-    CounterConfig(ip=IP8, tag="Cont_P1", name="Puesto 1", input_index=0),
-    CounterConfig(ip=IP8, tag="Cont_P2", name="Puesto 2", input_index=1),
+    CounterConfig(ip=IP8, tag="Cont_P1", name="Puesto 1",
+                  input_tag="_IO_EM_DI_00", version=1),
+    CounterConfig(ip=IP8, tag="Cont_P2", name="Puesto 2",
+                  input_tag="_IO_EM_DI_01", version=1),
 ]
-COUNTERS_9 = [CounterConfig(ip=IP9, tag="Cont_P3", name="Puesto 3", input_index=0)]
+COUNTERS_9 = [
+    CounterConfig(ip=IP9, tag="Cont_P3", name="Puesto 3",
+                  input_tag="_IO_P1_DI_00", version=1)
+]
 
 
 class FakePlc:
@@ -98,18 +103,29 @@ def published(stream):
 # --- what gets requested --------------------------------------------------------------
 
 
-def test_everything_is_fetched_in_one_batched_read(stream, config):
+def test_counters_inputs_and_variador_tags_are_all_requested(stream, config):
     worker = make_worker(PLC_9, COUNTERS_9, FakePlc(IP9), stream, config)
-    assert worker._read_names == ["Cont_P3", "InputStatus{1}", "frec", "status"]
+    assert worker._read_names == ["Cont_P3", "_IO_P1_DI_00", "frec", "status"]
 
 
-def test_the_array_length_comes_from_the_configured_indices(stream, config):
+def test_the_input_tags_come_from_counters_name(stream, config):
     counters = [
-        CounterConfig(ip=IP8, tag="a", name="A", input_index=0),
-        CounterConfig(ip=IP8, tag="b", name="B", input_index=7),
+        CounterConfig(ip=IP8, tag="a", name="A", input_tag="_IO_EM_DI_07", version=1),
+        CounterConfig(ip=IP8, tag="b", name="B", input_tag="_IO_P2_DI_03", version=1),
     ]
     worker = make_worker(PLC_8, counters, FakePlc(IP8), stream, config)
-    assert "InputStatus{8}" in worker._read_names
+    assert worker._read_names == ["a", "b", "_IO_EM_DI_07", "_IO_P2_DI_03"]
+
+
+def test_a_tag_asked_for_twice_is_only_requested_once(stream, config):
+    """These are Micro820s: pycomm3 sends one request per tag, so a duplicate costs a
+    whole round trip."""
+    counters = [
+        CounterConfig(ip=IP8, tag="Shared", name="A", input_tag="Shared", version=1),
+        CounterConfig(ip=IP8, tag="b", name="B", input_tag="_IO_EM_DI_01", version=1),
+    ]
+    worker = make_worker(PLC_8, counters, FakePlc(IP8), stream, config)
+    assert worker._read_names == ["Shared", "b", "_IO_EM_DI_01"]
 
 
 def test_a_non_variador_plc_does_not_ask_for_frec_or_status(stream, config):
@@ -120,7 +136,10 @@ def test_a_non_variador_plc_does_not_ask_for_frec_or_status(stream, config):
 
 def test_unmapped_counters_are_still_polled_for_stops(stream, config):
     """Deploying before the relays are mapped must still record stop counts."""
-    counters = [CounterConfig(ip=IP8, tag="Cont_P1", name="Puesto 1", input_index=None)]
+    counters = [
+        CounterConfig(ip=IP8, tag="Cont_P1", name="Puesto 1", input_tag=None,
+                      version=1)
+    ]
     worker = make_worker(PLC_8, counters, FakePlc(IP8), stream, config)
     assert worker._read_names == ["Cont_P1"]
 
@@ -129,7 +148,10 @@ def test_unmapped_counters_are_still_polled_for_stops(stream, config):
 
 
 def test_a_first_tick_publishes_resync_inputs_and_a_heartbeat(stream, config):
-    fake = FakePlc(IP8, [{"Cont_P1": 5, "Cont_P2": 2, "InputStatus{2}": [False, True]}])
+    # Wire levels: DI_00 closed (Cont_P1 libre), DI_01 open (Cont_P2 pidiendo parada).
+    fake = FakePlc(IP8, [
+        {"Cont_P1": 5, "Cont_P2": 2, "_IO_EM_DI_00": True, "_IO_EM_DI_01": False},
+    ])
     worker = make_worker(PLC_8, COUNTERS_8, fake, stream, config)
 
     worker._resync()
@@ -145,8 +167,9 @@ def test_a_first_tick_publishes_resync_inputs_and_a_heartbeat(stream, config):
 
 def test_a_stop_is_stamped_with_the_same_ticks_line_state(stream, config):
     fake = FakePlc(IP9, [
-        {"Cont_P3": 5, "InputStatus{1}": [False], "frec": 10.0, "status": True},
-        {"Cont_P3": 6, "InputStatus{1}": [True], "frec": 10.0, "status": True},
+        # libre, then the relay opens: the puesto asks for a stop.
+        {"Cont_P3": 5, "_IO_P1_DI_00": True, "frec": 10.0, "status": True},
+        {"Cont_P3": 6, "_IO_P1_DI_00": False, "frec": 10.0, "status": True},
     ])
     worker = make_worker(PLC_9, COUNTERS_9, fake, stream, config)
 
@@ -169,7 +192,7 @@ def test_a_stop_is_stamped_with_the_same_ticks_line_state(stream, config):
 
 def test_the_variador_plc_publishes_speed_and_status(stream, config):
     fake = FakePlc(IP9, [
-        {"Cont_P3": 5, "InputStatus{1}": [False], "frec": 10.0, "status": True},
+        {"Cont_P3": 5, "_IO_P1_DI_00": True, "frec": 10.0, "status": True},
     ])
     worker = make_worker(PLC_9, COUNTERS_9, fake, stream, config)
     worker._resync()
@@ -183,7 +206,7 @@ def test_the_variador_plc_publishes_speed_and_status(stream, config):
 
 
 def test_a_steady_line_goes_quiet_after_the_first_tick(stream, config):
-    reading = {"Cont_P3": 5, "InputStatus{1}": [False], "frec": 10.0, "status": True}
+    reading = {"Cont_P3": 5, "_IO_P1_DI_00": True, "frec": 10.0, "status": True}
     fake = FakePlc(IP9, [dict(reading) for _ in range(5)])
     worker = make_worker(PLC_9, COUNTERS_9, fake, stream, config)
 
@@ -199,8 +222,9 @@ def test_a_steady_line_goes_quiet_after_the_first_tick(stream, config):
 def test_a_reconnect_resyncs_instead_of_reporting_the_gap_as_stops(stream, config):
     """The counter moved by 200 while disconnected; that is not a burst of stops."""
     fake = FakePlc(IP8, [
-        {"Cont_P1": 5, "Cont_P2": 2, "InputStatus{2}": [False, False]},
-        {"Cont_P1": 205, "Cont_P2": 2, "InputStatus{2}": [True, False]},
+        {"Cont_P1": 5, "Cont_P2": 2, "_IO_EM_DI_00": True, "_IO_EM_DI_01": True},
+        # DI_00 opens across the gap: Cont_P1 is holding the line on the far side.
+        {"Cont_P1": 205, "Cont_P2": 2, "_IO_EM_DI_00": False, "_IO_EM_DI_01": True},
     ])
     worker = make_worker(PLC_8, COUNTERS_8, fake, stream, config)
 
@@ -225,7 +249,7 @@ def test_the_worker_thread_reconnects_and_then_exits_on_shutdown(stream, config)
 
     def factory(ip):
         fake = FakePlc(ip, [{"Cont_P1": 5, "Cont_P2": 2,
-                             "InputStatus{2}": [False, False]}])
+                             "_IO_EM_DI_00": True, "_IO_EM_DI_01": True}])
         attempts.append(fake)
         return fake
 
