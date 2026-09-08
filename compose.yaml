@@ -1,0 +1,36 @@
+services:
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --appendfsync everysec
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  paradas-faena:
+    build: .
+    image: paradas-faena:2.0.0
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      TZ: America/Argentina/Buenos_Aires
+      REDIS_URL: redis://redis:6379/0
+    env_file: [.env]
+    stop_grace_period: 40s
+    volumes:
+      - type: bind
+        source: /mnt/tipificador
+        target: /mnt/tipificador
+        read_only: true
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+volumes:
+  redis-data:

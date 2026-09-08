@@ -1,0 +1,21 @@
+# Credentials — .env holds the DB password and PLC addresses. Never commit it.
+.env
+.env.*
+!.env.example
+
+# Runtime state
+*.log
+spool/
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

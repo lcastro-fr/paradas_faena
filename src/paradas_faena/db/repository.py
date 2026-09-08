@@ -1,0 +1,207 @@
+from __future__ import annotations
+
+import contextlib
+import datetime as dt
+import logging
+from dataclasses import dataclass
+
+import psycopg
+from psycopg import sql
+
+from ..config import DbConfig
+from ..events import (
+    CounterIncrement,
+    Heartbeat,
+    InputEdge,
+    NoriaStatusEdge,
+    SessionClosed,
+    SpeedSample,
+)
+
+log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class PlcConfig:
+    ip: str
+    nombre: str | None
+    variador: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CounterConfig:
+    ip: str
+    tag: str
+    name: str | None
+    input_index: int | None
+
+
+def local_parts(ts: dt.datetime) -> tuple[dt.date, dt.time]:
+    """Split an observation instant into the local date and time."""
+    local = ts.astimezone()
+    return local.date(), local.time()
+
+
+class Repository:
+    """Owns the single database connection. Used from one thread only."""
+
+    def __init__(self, conn: psycopg.Connection, schema: str) -> None:
+        self._conn = conn
+        self._schema = schema
+
+    @staticmethod
+    def connect(db: DbConfig) -> Repository:
+        conn = psycopg.connect(db.conninfo(), autocommit=False)
+        return Repository(conn, db.schema)
+
+    def close(self) -> None:
+        with contextlib.suppress(Exception):
+            self._conn.close()
+
+    def commit(self) -> None:
+        self._conn.commit()
+
+    def rollback(self) -> None:
+        with contextlib.suppress(Exception):
+            self._conn.rollback()
+
+    def ping(self) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute("select 1")
+        self._conn.commit()
+
+    def _q(self, template: str) -> sql.Composed:
+        return sql.SQL(template).format(schema=sql.Identifier(self._schema))
+
+    # -- configuration ---------------------------------------------------------------
+
+    def load_plcs(self) -> list[PlcConfig]:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                self._q("select host(ip), nombre, variador from {schema}.plcs order by ip")
+            )
+            rows = cur.fetchall()
+        self._conn.commit()
+        return [PlcConfig(ip=r[0], nombre=r[1], variador=r[2]) for r in rows]
+
+    def load_counters(self) -> list[CounterConfig]:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                self._q(
+                    "select host(ip), tag, name, input_index "
+                    "from {schema}.counters_name order by ip, input_index nulls last, tag"
+                )
+            )
+            rows = cur.fetchall()
+        self._conn.commit()
+        return [CounterConfig(ip=r[0], tag=r[1], name=r[2], input_index=r[3]) for r in rows]
+
+    # -- writes ----------------------------------------------------------------------
+
+    def insert_counters(self, events: list[CounterIncrement]) -> None:
+        if not events:
+            return
+        params = []
+        for e in events:
+            fecha, hora = local_parts(e.ts)
+            params.append(
+                (
+                    e.ip,
+                    e.tag,
+                    e.old_value,
+                    e.new_value,
+                    e.dif,
+                    fecha,
+                    hora,
+                    e.noria_running,
+                    e.vel,
+                    e.event_uid,
+                )
+            )
+        with self._conn.cursor() as cur:
+            cur.executemany(
+                self._q(
+                    "insert into {schema}.paradas "
+                    "(ip, tag, old_value, new_value, dif, fecha, hora, "
+                    " status_noria, vel, event_uid) "
+                    "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "on conflict (event_uid) do nothing"
+                ),
+                params,
+            )
+
+    def insert_input_edges(self, events: list[InputEdge]) -> None:
+        """Write relay transitions.
+
+        `reason` is not stored: the reporting queries only need (ts, value).
+        """
+        if not events:
+            return
+        with self._conn.cursor() as cur:
+            cur.executemany(
+                self._q(
+                    "insert into {schema}.input_status (ip, tag, ts, value) "
+                    "values (%s, %s, %s, %s) "
+                    "on conflict (ip, tag, ts) do nothing"
+                ),
+                [(e.ip, e.tag, e.ts, e.value) for e in events],
+            )
+
+    def insert_speed(self, events: list[SpeedSample]) -> None:
+        if not events:
+            return
+        params = []
+        for e in events:
+            fecha, hora = local_parts(e.ts)
+            params.append((fecha, hora, e.frec, e.vel, e.noria_running, e.event_uid))
+        with self._conn.cursor() as cur:
+            cur.executemany(
+                self._q(
+                    "insert into {schema}.velocidad "
+                    "(fecha, hora, frec, vel, status_noria, event_uid) "
+                    "values (%s, %s, %s, %s, %s, %s) "
+                    "on conflict (event_uid) do nothing"
+                ),
+                params,
+            )
+
+    def insert_noria_status(self, events: list[NoriaStatusEdge]) -> None:
+        if not events:
+            return
+        with self._conn.cursor() as cur:
+            cur.executemany(
+                self._q(
+                    "insert into {schema}.noria_status (ip, ts, running) "
+                    "values (%s, %s, %s) on conflict (ip, ts) do nothing"
+                ),
+                [(e.ip, e.ts, e.running) for e in events],
+            )
+
+    def insert_heartbeats(self, events: list[Heartbeat]) -> None:
+        if not events:
+            return
+        with self._conn.cursor() as cur:
+            cur.executemany(
+                self._q(
+                    "insert into {schema}.plc_heartbeat (ip, ts) "
+                    "values (%s, %s) on conflict (ip, ts) do nothing"
+                ),
+                [(e.ip, e.ts) for e in events],
+            )
+
+    def upsert_generales(self, events: list[SessionClosed]) -> None:
+        if not events:
+            return
+        with self._conn.cursor() as cur:
+            cur.executemany(
+                self._q(
+                    "insert into {schema}.generales "
+                    "(fecha, hora_inicio, hora_fin, registros) "
+                    "values (%s, %s, %s, %s) "
+                    "on conflict (fecha) do update set "
+                    "  hora_inicio = excluded.hora_inicio, "
+                    "  hora_fin    = excluded.hora_fin, "
+                    "  registros   = excluded.registros"
+                ),
+                [(e.fecha, e.hora_inicio, e.hora_fin, e.registros) for e in events],
+            )
