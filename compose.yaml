@@ -10,6 +10,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    network:
+      - backend
 
   migrate:
     image: ghcr.io/amacneil/dbmate:2.35.1
@@ -47,6 +49,14 @@ services:
     logging:
       driver: json-file
       options: { max-size: "20m", max-file: "5" }
+    network:
+      - backend
 
 volumes:
   redis-data:
+
+networks:
+  backend:
+    ipam:
+      config:
+        - subnet: 10.250.30.0/24
