@@ -12,11 +12,15 @@
 --
 -- orden_array existed only to index CTimersArray, which is no longer read.
 
-begin;
+-- migrate:up
 
 alter table monitoreo_faena.tiempos_parada rename to tiempos_parada_old;
 alter index monitoreo_faena.tiempos_parada_idx rename to tiempos_parada_old_idx;
 
 alter table monitoreo_faena.counters_name drop column orden_array;
 
-commit;
+-- migrate:down
+
+alter table monitoreo_faena.tiempos_parada_old rename to tiempos_parada;
+alter index monitoreo_faena.tiempos_parada_old_idx rename to tiempos_parada_idx;
+alter table monitoreo_faena.counters_name add column if not exists orden_array integer;

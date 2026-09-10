@@ -11,8 +11,10 @@ point of the transport, so neither is worth verifying against a mock.
     export PF_TEST_DSN='host=localhost port=55432 dbname=testdb user=postgres password=test'
     export PF_TEST_REDIS_URL=redis://localhost:56379/0
 
-The schema is built the way production will be: schema.sql as it stands, then the
-migrations in order, so these tests also cover the migration path.
+The schema is built the way production will be: the `-- migrate:up` section of every
+file in migrations/, in order -- the same slices dbmate applies. SCHEMA is the production
+schema name because the migrations and queries/*.sql hardcode it, so isolation comes from
+PF_TEST_DSN pointing at a database you can afford to lose.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ import pytest
 psycopg = pytest.importorskip("psycopg")
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SCHEMA = "paradas_faena"
+SCHEMA = "monitoreo_faena"
 
 _WRITABLE = [
     "input_status", "noria_status", "plc_heartbeat", "paradas", "velocidad", "generales",
@@ -61,13 +63,38 @@ def db_conn():
         yield conn
 
 
+MIGRATIONS = sorted((ROOT / "migrations").glob("*.sql"))
+
+
+def up_section(text: str) -> str:
+    """The `-- migrate:up` slice of a migration -- exactly what dbmate would execute."""
+    _, directive, rest = text.partition("-- migrate:up")
+    if not directive:
+        raise AssertionError("falta la directiva -- migrate:up")
+    _, _, body = rest.partition("\n")
+    return body.partition("-- migrate:down")[0]
+
+
+def _guard_disposable(conn) -> None:
+    if os.environ.get("PF_TEST_ALLOW_DESTRUCTIVE") == "1":
+        return
+    dbname = conn.info.dbname
+    if "test" not in dbname:
+        pytest.exit(
+            f"PF_TEST_DSN apunta a la base '{dbname}', que no parece descartable, y "
+            f"_build_schema hace `drop schema {SCHEMA} cascade`. Usa una base de prueba "
+            f"(ver tests/conftest.py) o exporta PF_TEST_ALLOW_DESTRUCTIVE=1.",
+            returncode=1,
+        )
+
+
 def _build_schema(conn) -> None:
+    _guard_disposable(conn)
     with conn.cursor() as cur:
         cur.execute(f"drop schema if exists {SCHEMA} cascade")
-        cur.execute(f"create schema {SCHEMA}")
-    for path in [ROOT / "schema.sql", *sorted((ROOT / "migrations").glob("00*.sql"))]:
+    for path in MIGRATIONS:
         with conn.cursor() as cur:
-            cur.execute(path.read_text())
+            cur.execute(up_section(path.read_text()))
 
     with conn.cursor() as cur:
         cur.execute(

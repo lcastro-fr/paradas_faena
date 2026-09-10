@@ -278,7 +278,7 @@ def test_losing_the_database_mid_run_costs_nothing(db, stream, config):
         with db.cursor() as cur:
             cur.execute(
                 "select pg_terminate_backend(pid) from pg_stat_activity "
-                "where application_name = 'monitoreo_faena' and pid <> pg_backend_pid()"
+                "where application_name = 'paradas_faena' and pid <> pg_backend_pid()"
             )
             assert cur.rowcount >= 1
 

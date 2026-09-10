@@ -11,7 +11,7 @@
 -- The daemon always reads the highest version per (ip, tag) -- see
 -- Repository.load_counters -- and stamps it on every event.
 
-begin;
+-- migrate:up
 
 alter table monitoreo_faena.counters_name
     add column version integer not null default 1;
@@ -52,4 +52,4 @@ create unique index counters_name_input_tag_uq
 create index idx_paradas_counter on monitoreo_faena.paradas (ip, tag, version);
 create index idx_input_status_counter on monitoreo_faena.input_status (ip, tag, version);
 
-commit;
+-- migrate:down

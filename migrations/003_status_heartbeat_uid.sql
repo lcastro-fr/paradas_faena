@@ -15,7 +15,7 @@
 -- only a serial id, so they get a unique event id assigned at read time to make replay
 -- (and a crash between COMMIT and spool truncation) idempotent too.
 
-begin;
+-- migrate:up
 
 create table monitoreo_faena.noria_status
 (
@@ -43,4 +43,11 @@ create unique index if not exists paradas_event_uid_uq
 create unique index if not exists velocidad_event_uid_uq
     on monitoreo_faena.velocidad (event_uid);
 
-commit;
+-- migrate:down
+
+drop index if exists monitoreo_faena.velocidad_event_uid_uq;
+drop index if exists monitoreo_faena.paradas_event_uid_uq;
+alter table monitoreo_faena.velocidad drop column if exists event_uid;
+alter table monitoreo_faena.paradas   drop column if exists event_uid;
+drop table if exists monitoreo_faena.plc_heartbeat;
+drop table if exists monitoreo_faena.noria_status;

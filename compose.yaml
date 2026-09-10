@@ -11,6 +11,20 @@ services:
       timeout: 3s
       retries: 5
 
+  migrate:
+    image: ghcr.io/amacneil/dbmate:2.35.1
+    restart: "no"
+    environment:
+      DATABASE_URL: "postgres://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=disable&search_path=${DB_SCHEMA}"
+      DBMATE_MIGRATIONS_DIR: /db/migrations
+      DBMATE_NO_DUMP_SCHEMA: "true"
+    command: ["--wait", "--wait-timeout", "60s", "migrate"]
+    volumes:
+      - ./migrations:/db/migrations:ro
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
   paradas-faena:
     build: .
     image: paradas-faena:2.0.0
@@ -18,6 +32,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       TZ: America/Argentina/Buenos_Aires
       REDIS_URL: redis://redis:6379/0

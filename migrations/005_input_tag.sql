@@ -16,7 +16,7 @@
 -- Safe to re-run over a database where an earlier draft of this migration only changed
 -- the type.
 
-begin;
+-- migrate:up
 
 do $$
 begin
@@ -35,4 +35,10 @@ begin
     end if;
 end $$;
 
-commit;
+-- migrate:down
+
+alter index monitoreo_faena.counters_name_input_tag_uq
+    rename to counters_name_input_index_uq;
+alter table monitoreo_faena.counters_name rename column input_tag to input_index;
+alter table monitoreo_faena.counters_name
+    alter column input_index type integer using null;

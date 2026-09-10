@@ -9,7 +9,7 @@
 -- the PLC list from the table and asks it which one carries the frequency converter,
 -- so adding a third PLC needs no code change.
 
-begin;
+-- migrate:up
 
 alter table monitoreo_faena.counters_name
     add column if not exists input_index integer;
@@ -22,4 +22,8 @@ alter table monitoreo_faena.plcs
     add column if not exists variador boolean not null default false;
 
 
-commit;
+-- migrate:down
+
+alter table monitoreo_faena.plcs drop column if exists variador;
+drop index if exists monitoreo_faena.counters_name_input_index_uq;
+alter table monitoreo_faena.counters_name drop column if exists input_index;

@@ -24,6 +24,23 @@ services:
       - db-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "${DB_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    image: ghcr.io/amacneil/dbmate:2.35.1
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}?sslmode=disable&search_path=${DB_SCHEMA}"
+      DBMATE_MIGRATIONS_DIR: /db/migrations
+      DBMATE_NO_DUMP_SCHEMA: "true"
+    command: ["--wait", "--wait-timeout", "60s", "migrate"]
+    volumes:
+      - ./migrations:/db/migrations:ro
 
   paradas-faena:
     build: .
@@ -32,6 +49,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       TZ: America/Argentina/Buenos_Aires
       REDIS_URL: redis://redis:6379/0

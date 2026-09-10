@@ -8,7 +8,7 @@
 --
 -- `ts` is the instant the PLC was read, captured in the reader thread.
 
-begin;
+-- migrate:up
 
 create table monitoreo_faena.input_status
 (
@@ -26,4 +26,6 @@ create table monitoreo_faena.input_status
 create index idx_input_status_ts on monitoreo_faena.input_status (ts);
 create index idx_input_status_tag_ts on monitoreo_faena.input_status (ip, tag, ts);
 
-commit;
+-- migrate:down
+
+drop table if exists monitoreo_faena.input_status;

@@ -1,3 +1,4 @@
+-- migrate:up
 create schema if not exists monitoreo_faena;
 
 create table monitoreo_faena.destinatarios_reporte
@@ -106,3 +107,13 @@ create table monitoreo_faena.tiempos_parada
 
 create unique index tiempos_parada_idx
     on monitoreo_faena.tiempos_parada (fecha, name);
+
+-- migrate:down
+drop table if exists monitoreo_faena.tiempos_parada;
+drop table if exists monitoreo_faena.velocidad;
+drop table if exists monitoreo_faena.paradas;
+drop table if exists monitoreo_faena.counters_name;
+drop table if exists monitoreo_faena.plcs;
+drop table if exists monitoreo_faena.inspeccion;
+drop table if exists monitoreo_faena.generales;
+drop table if exists monitoreo_faena.destinatarios_reporte;
