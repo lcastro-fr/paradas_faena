@@ -5,7 +5,13 @@ import logging
 from collections.abc import Mapping
 from typing import NamedTuple
 
-from ..events import CounterIncrement, Heartbeat, InputEdge, NoriaStatusEdge, SpeedSample
+from paradas_faena.events import (
+    CounterIncrement,
+    Heartbeat,
+    InputEdge,
+    NoriaStatusEdge,
+    SpeedSample,
+)
 
 log = logging.getLogger(__name__)
 

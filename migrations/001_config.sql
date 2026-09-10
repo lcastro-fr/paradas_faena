@@ -11,16 +11,15 @@
 
 begin;
 
-alter table paradas_faena.counters_name
+alter table monitoreo_faena.counters_name
     add column if not exists input_index integer;
 
 create unique index if not exists counters_name_input_index_uq
-    on paradas_faena.counters_name (ip, input_index)
+    on monitoreo_faena.counters_name (ip, input_index)
     where input_index is not null;
 
-alter table paradas_faena.plcs
+alter table monitoreo_faena.plcs
     add column if not exists variador boolean not null default false;
 
-update paradas_faena.plcs set variador = true where ip = '172.30.10.9';
 
 commit;

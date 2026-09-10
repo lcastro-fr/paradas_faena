@@ -21,8 +21,8 @@ with paradas_seg as (
            least(coalesce(lead(s.ts) over (partition by s.ip, s.tag order by s.ts),
                           %(hasta)s),
                  %(hasta)s) as ts_end
-    from paradas_faena.input_status s
-    join paradas_faena.counters_name cn using (ip, tag, version)
+    from monitoreo_faena.input_status s
+    join monitoreo_faena.counters_name cn using (ip, tag, version)
     where s.ts >= %(desde)s - interval '1 hour'
       and s.ts <  %(hasta)s
 ),
@@ -32,7 +32,7 @@ noria_seg as (
            least(coalesce(lead(n.ts) over (partition by n.ip order by n.ts),
                           %(hasta)s),
                  %(hasta)s) as ts_end
-    from paradas_faena.noria_status n
+    from monitoreo_faena.noria_status n
     where n.ts >= %(desde)s - interval '1 hour'
       and n.ts <  %(hasta)s
 )

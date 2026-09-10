@@ -22,15 +22,15 @@ do $$
 begin
     if exists (
         select 1 from information_schema.columns
-        where table_schema = 'paradas_faena'
+        where table_schema = 'monitoreo_faena'
           and table_name = 'counters_name'
           and column_name = 'input_index'
     ) then
-        alter table paradas_faena.counters_name
+        alter table monitoreo_faena.counters_name
             alter column input_index type varchar using null;
-        alter table paradas_faena.counters_name
+        alter table monitoreo_faena.counters_name
             rename column input_index to input_tag;
-        alter index paradas_faena.counters_name_input_index_uq
+        alter index monitoreo_faena.counters_name_input_index_uq
             rename to counters_name_input_tag_uq;
     end if;
 end $$;

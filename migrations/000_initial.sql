@@ -1,3 +1,5 @@
+create schema if not exists monitoreo_faena;
+
 create table monitoreo_faena.destinatarios_reporte
 (
     email  varchar not null

@@ -6,10 +6,10 @@ import logging
 import threading
 from pathlib import Path
 
-from .config import Config
-from .events import SessionClosed
-from .runner import ManagedThread
-from .stream import EventStream
+from paradas_faena.config import Config
+from paradas_faena.events import SessionClosed
+from paradas_faena.runner import ManagedThread
+from paradas_faena.stream import EventStream
 
 log = logging.getLogger(__name__)
 

@@ -17,7 +17,7 @@
 
 begin;
 
-create table paradas_faena.noria_status
+create table monitoreo_faena.noria_status
 (
     ip      inet        not null,
     ts      timestamptz not null,
@@ -25,22 +25,22 @@ create table paradas_faena.noria_status
     constraint noria_status_pk primary key (ip, ts)
 );
 
-create table paradas_faena.plc_heartbeat
+create table monitoreo_faena.plc_heartbeat
 (
     ip inet        not null,
     ts timestamptz not null,
     constraint plc_heartbeat_pk primary key (ip, ts)
 );
 
-alter table paradas_faena.paradas   add column if not exists event_uid uuid;
-alter table paradas_faena.velocidad add column if not exists event_uid uuid;
+alter table monitoreo_faena.paradas   add column if not exists event_uid uuid;
+alter table monitoreo_faena.velocidad add column if not exists event_uid uuid;
 
 -- Not partial: PostgreSQL already permits many NULLs in a unique index, so existing
 -- rows (which all have event_uid NULL) are fine, and a non-partial index is what
 -- ON CONFLICT (event_uid) can infer without repeating a predicate.
 create unique index if not exists paradas_event_uid_uq
-    on paradas_faena.paradas (event_uid);
+    on monitoreo_faena.paradas (event_uid);
 create unique index if not exists velocidad_event_uid_uq
-    on paradas_faena.velocidad (event_uid);
+    on monitoreo_faena.velocidad (event_uid);
 
 commit;

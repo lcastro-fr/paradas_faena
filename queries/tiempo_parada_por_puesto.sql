@@ -26,8 +26,8 @@ with bounded as (
            least(coalesce(lead(s.ts) over (partition by s.ip, s.tag order by s.ts),
                           %(hasta)s),
                  %(hasta)s) as ts_end
-    from paradas_faena.input_status s
-    join paradas_faena.counters_name cn using (ip, tag, version)
+    from monitoreo_faena.input_status s
+    join monitoreo_faena.counters_name cn using (ip, tag, version)
     -- Reach back so a segment already open at `desde` is seen.
     where s.ts >= %(desde)s - interval '1 hour'
       and s.ts <  %(hasta)s

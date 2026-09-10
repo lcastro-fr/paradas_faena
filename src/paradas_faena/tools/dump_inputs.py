@@ -25,9 +25,9 @@ import datetime as dt
 import sys
 import time
 
-from ..config import ConfigError, load_config
-from ..db.repository import Repository
-from ..plc.client import PlcClient, PlcReadError
+from paradas_faena.config import ConfigError, load_config
+from paradas_faena.db.repository import Repository
+from paradas_faena.plc.client import PlcClient, PlcReadError
 
 
 def _known_mapping(ip: str) -> dict[str, str]:
@@ -59,14 +59,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("ip", help="direccion del PLC, ej. 172.30.10.8")
     parser.add_argument(
-        "--filter", default="_DI_",
+        "--filter",
+        default="_DI_",
         help="subcadena que debe tener el nombre del tag (por defecto _DI_)",
     )
     parser.add_argument(
-        "--all", action="store_true", help="mirar todos los BOOL, sin filtrar",
+        "--all",
+        action="store_true",
+        help="mirar todos los BOOL, sin filtrar",
     )
     parser.add_argument(
-        "--interval", type=float, default=0.5, help="intervalo de lectura en segundos",
+        "--interval",
+        type=float,
+        default=0.5,
+        help="intervalo de lectura en segundos",
     )
     args = parser.parse_args(argv)
 
@@ -84,8 +90,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             if not names:
                 hint = "" if args.all else " (probá --all o cambiá --filter)"
-                print(f"no se encontraron entradas BOOL en {args.ip}{hint}",
-                      file=sys.stderr)
+                print(
+                    f"no se encontraron entradas BOOL en {args.ip}{hint}", file=sys.stderr
+                )
                 return 1
 
             print(f"PLC {args.ip} — {len(names)} entradas BOOL")

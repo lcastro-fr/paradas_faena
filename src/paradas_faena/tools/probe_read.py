@@ -16,9 +16,9 @@ import statistics
 import sys
 import time
 
-from ..config import ConfigError, load_config
-from ..db.repository import Repository
-from ..plc.client import PlcClient, PlcReadError
+from paradas_faena.config import ConfigError, load_config
+from paradas_faena.db.repository import Repository
+from paradas_faena.plc.client import PlcClient, PlcReadError
 
 
 def _plan(ip: str) -> tuple[list[str], dict[str, str], float]:

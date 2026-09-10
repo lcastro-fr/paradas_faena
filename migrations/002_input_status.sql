@@ -10,7 +10,7 @@
 
 begin;
 
-create table paradas_faena.input_status
+create table monitoreo_faena.input_status
 (
     ip    inet        not null,
     tag   varchar     not null,
@@ -19,11 +19,11 @@ create table paradas_faena.input_status
     constraint input_status_pk
         primary key (ip, tag, ts),
     constraint input_status_counters_name_fk
-        foreign key (ip, tag) references paradas_faena.counters_name
+        foreign key (ip, tag) references monitoreo_faena.counters_name
 );
 
 -- Reporting always slices by time, and the window function partitions by (ip, tag).
-create index idx_input_status_ts on paradas_faena.input_status (ts);
-create index idx_input_status_tag_ts on paradas_faena.input_status (ip, tag, ts);
+create index idx_input_status_ts on monitoreo_faena.input_status (ts);
+create index idx_input_status_tag_ts on monitoreo_faena.input_status (ip, tag, ts);
 
 commit;

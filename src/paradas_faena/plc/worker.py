@@ -6,14 +6,11 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 
-from ..backoff import Backoff
-from ..config import Config
-from ..db.repository import CounterConfig, PlcConfig
-from ..runner import ManagedThread
-from ..state import LineState
-from ..stream import EventStream
-from .client import PlcClient, PlcReadError
-from .trackers import (
+from paradas_faena.backoff import Backoff
+from paradas_faena.config import Config
+from paradas_faena.db.repository import CounterConfig, PlcConfig
+from paradas_faena.plc.client import PlcClient, PlcReadError
+from paradas_faena.plc.trackers import (
     CounterTracker,
     HeartbeatTracker,
     InputBinding,
@@ -21,6 +18,9 @@ from .trackers import (
     NoriaStatusTracker,
     SpeedTracker,
 )
+from paradas_faena.runner import ManagedThread
+from paradas_faena.state import LineState
+from paradas_faena.stream import EventStream
 
 log = logging.getLogger(__name__)
 
@@ -76,8 +76,6 @@ class PlcWorker(ManagedThread):
         names = [*self._counter_tags, *self._input_bindings]
         if plc.variador:
             names += [config.frec_tag, config.status_tag]
-        # Deduplicated: these are Micro820s, so pycomm3 sends one request per tag and
-        # asking twice for the same one costs a whole round trip.
         self._read_names: list[str] = list(dict.fromkeys(names))
 
     def run(self) -> None:

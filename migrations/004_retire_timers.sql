@@ -14,9 +14,9 @@
 
 begin;
 
-alter table paradas_faena.tiempos_parada rename to tiempos_parada_old;
-alter index paradas_faena.tiempos_parada_idx rename to tiempos_parada_old_idx;
+alter table monitoreo_faena.tiempos_parada rename to tiempos_parada_old;
+alter index monitoreo_faena.tiempos_parada_idx rename to tiempos_parada_old_idx;
 
-alter table paradas_faena.counters_name drop column orden_array;
+alter table monitoreo_faena.counters_name drop column orden_array;
 
 commit;

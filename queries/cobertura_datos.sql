@@ -12,8 +12,8 @@ select host(p.ip) as ip,
                       / extract(epoch from %(heartbeat)s::interval), 0), 3) as cobertura,
        min(h.ts) as primer_latido,
        max(h.ts) as ultimo_latido
-from paradas_faena.plcs p
-left join paradas_faena.plc_heartbeat h
+from monitoreo_faena.plcs p
+left join pmonitoreo_faena.plc_heartbeat h
        on h.ip = p.ip
       and h.ts >= %(desde)s
       and h.ts <  %(hasta)s

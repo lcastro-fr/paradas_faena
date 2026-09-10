@@ -36,18 +36,34 @@ def count(db, table: str) -> int:
 
 def sample_events() -> list:
     return [
-        InputEdge(ip=IP8, tag="Cont_P1", version=1, ts=ts(10, 0, 0), value=True,
-                  reason="change"),
-        InputEdge(ip=IP8, tag="Cont_P1", version=1, ts=ts(10, 0, 30), value=False,
-                  reason="change"),
-        CounterIncrement(ip=IP8, tag="Cont_P1", ts=ts(10, 0, 0), old_value=4,
-                         new_value=5, dif=1, noria_running=True, vel=42.3, version=1),
-        SpeedSample(ip="172.30.10.9", ts=ts(10, 0, 0), frec=10.0, vel=42.3,
-                    noria_running=True),
+        InputEdge(
+            ip=IP8, tag="Cont_P1", version=1, ts=ts(10, 0, 0), value=True, reason="change"
+        ),
+        InputEdge(
+            ip=IP8, tag="Cont_P1", version=1, ts=ts(10, 0, 30), value=False, reason="change"
+        ),
+        CounterIncrement(
+            ip=IP8,
+            tag="Cont_P1",
+            ts=ts(10, 0, 0),
+            old_value=4,
+            new_value=5,
+            dif=1,
+            noria_running=True,
+            vel=42.3,
+            version=1,
+        ),
+        SpeedSample(
+            ip="172.30.10.9", ts=ts(10, 0, 0), frec=10.0, vel=42.3, noria_running=True
+        ),
         NoriaStatusEdge(ip="172.30.10.9", ts=ts(10, 0, 0), running=True),
         Heartbeat(ip=IP8, ts=ts(10, 0, 0)),
-        SessionClosed(fecha=dt.date(2026, 9, 7), hora_inicio=dt.time(6, 2),
-                      hora_fin=dt.time(16, 14), registros=1200),
+        SessionClosed(
+            fecha=dt.date(2026, 9, 7),
+            hora_inicio=dt.time(6, 2),
+            hora_fin=dt.time(16, 14),
+            registros=1200,
+        ),
     ]
 
 
@@ -84,9 +100,19 @@ def test_a_committed_batch_is_acknowledged(db, stream, config):
 
 
 def test_a_stop_lands_with_the_line_state_captured_at_read_time(db, stream, config):
-    stream.publish(CounterIncrement(ip=IP8, tag="Cont_P1", ts=ts(10, 0, 0), old_value=4,
-                                    new_value=6, dif=2, noria_running=False,
-                                    vel=0.0, version=1))
+    stream.publish(
+        CounterIncrement(
+            ip=IP8,
+            tag="Cont_P1",
+            ts=ts(10, 0, 0),
+            old_value=4,
+            new_value=6,
+            dif=2,
+            noria_running=False,
+            vel=0.0,
+            version=1,
+        )
+    )
     run_writer(stream, config, until=lambda: count(db, "paradas") == 1)
 
     with db.cursor() as cur:
@@ -102,9 +128,19 @@ def test_a_stop_lands_with_the_line_state_captured_at_read_time(db, stream, conf
 
 def test_unknown_line_state_is_stored_as_null_not_as_a_stale_value(db, stream, config):
     """The existing report's `where status_noria is not false` keeps these rows."""
-    stream.publish(CounterIncrement(ip=IP8, tag="Cont_P1", ts=ts(10), old_value=1,
-                                    new_value=2, dif=1, noria_running=None,
-                                    vel=None, version=1))
+    stream.publish(
+        CounterIncrement(
+            ip=IP8,
+            tag="Cont_P1",
+            ts=ts(10),
+            old_value=1,
+            new_value=2,
+            dif=1,
+            noria_running=None,
+            vel=None,
+            version=1,
+        )
+    )
     run_writer(stream, config, until=lambda: count(db, "paradas") == 1)
 
     with db.cursor() as cur:
@@ -128,9 +164,7 @@ def test_writing_the_same_batch_twice_inserts_each_row_once(db, config):
             repo.insert_input_edges([e for e in events if isinstance(e, InputEdge)])
             repo.insert_counters([e for e in events if isinstance(e, CounterIncrement)])
             repo.insert_speed([e for e in events if isinstance(e, SpeedSample)])
-            repo.insert_noria_status(
-                [e for e in events if isinstance(e, NoriaStatusEdge)]
-            )
+            repo.insert_noria_status([e for e in events if isinstance(e, NoriaStatusEdge)])
             repo.insert_heartbeats([e for e in events if isinstance(e, Heartbeat)])
             repo.upsert_generales([e for e in events if isinstance(e, SessionClosed)])
             repo.commit()
@@ -149,11 +183,27 @@ def test_generales_is_updated_rather_than_rejected_on_a_rerun(db, config):
     repo = Repository.connect(config.db)
     try:
         day = dt.date(2026, 9, 7)
-        repo.upsert_generales([SessionClosed(fecha=day, hora_inicio=dt.time(6, 0),
-                                             hora_fin=dt.time(16, 0), registros=1000)])
+        repo.upsert_generales(
+            [
+                SessionClosed(
+                    fecha=day,
+                    hora_inicio=dt.time(6, 0),
+                    hora_fin=dt.time(16, 0),
+                    registros=1000,
+                )
+            ]
+        )
         repo.commit()
-        repo.upsert_generales([SessionClosed(fecha=day, hora_inicio=dt.time(6, 2),
-                                             hora_fin=dt.time(16, 30), registros=1234)])
+        repo.upsert_generales(
+            [
+                SessionClosed(
+                    fecha=day,
+                    hora_inicio=dt.time(6, 2),
+                    hora_fin=dt.time(16, 30),
+                    registros=1234,
+                )
+            ]
+        )
         repo.commit()
     finally:
         repo.close()
@@ -167,10 +217,18 @@ def test_a_reassert_landing_on_an_existing_instant_is_absorbed(db, config):
     repo = Repository.connect(config.db)
     try:
         for reason in ("change", "reassert"):
-            repo.insert_input_edges([
-                InputEdge(ip=IP8, tag="Cont_P1", version=1, ts=ts(10), value=True,
-                          reason=reason)
-            ])
+            repo.insert_input_edges(
+                [
+                    InputEdge(
+                        ip=IP8,
+                        tag="Cont_P1",
+                        version=1,
+                        ts=ts(10),
+                        value=True,
+                        reason=reason,
+                    )
+                ]
+            )
             repo.commit()
     finally:
         repo.close()
@@ -180,10 +238,11 @@ def test_a_reassert_landing_on_an_existing_instant_is_absorbed(db, config):
 # --- failure paths --------------------------------------------------------------------
 
 
-def test_events_left_in_the_stream_by_a_previous_run_are_written_on_startup(db, stream,
-                                                                           config):
+def test_events_left_in_the_stream_by_a_previous_run_are_written_on_startup(
+    db, stream, config
+):
     stream.publish_many(sample_events())
-    assert stream.read_new(100, 50)          # read but never acked, as if the daemon died
+    assert stream.read_new(100, 50)  # read but never acked, as if the daemon died
     assert stream.pending_count() == len(sample_events())
 
     run_writer(stream, config, until=lambda: count(db, "input_status") == 2)
@@ -201,8 +260,16 @@ def test_losing_the_database_mid_run_costs_nothing(db, stream, config):
     writer.start()
     try:
         for n in range(20):
-            stream.publish(InputEdge(ip=IP8, tag="Cont_P1", ts=ts(10, 0, n),
-                                     value=bool(n % 2), reason="change", version=1))
+            stream.publish(
+                InputEdge(
+                    ip=IP8,
+                    tag="Cont_P1",
+                    ts=ts(10, 0, n),
+                    value=bool(n % 2),
+                    reason="change",
+                    version=1,
+                )
+            )
         deadline = time.monotonic() + 15
         while count(db, "input_status") < 20 and time.monotonic() < deadline:
             time.sleep(0.02)
@@ -211,13 +278,21 @@ def test_losing_the_database_mid_run_costs_nothing(db, stream, config):
         with db.cursor() as cur:
             cur.execute(
                 "select pg_terminate_backend(pid) from pg_stat_activity "
-                "where application_name = 'paradas_faena' and pid <> pg_backend_pid()"
+                "where application_name = 'monitoreo_faena' and pid <> pg_backend_pid()"
             )
             assert cur.rowcount >= 1
 
         for n in range(20, 40):
-            stream.publish(InputEdge(ip=IP8, tag="Cont_P1", ts=ts(10, 1, n - 20),
-                                     value=bool(n % 2), reason="change", version=1))
+            stream.publish(
+                InputEdge(
+                    ip=IP8,
+                    tag="Cont_P1",
+                    ts=ts(10, 1, n - 20),
+                    value=bool(n % 2),
+                    reason="change",
+                    version=1,
+                )
+            )
 
         deadline = time.monotonic() + 25
         while count(db, "input_status") < 40 and time.monotonic() < deadline:
@@ -229,15 +304,25 @@ def test_losing_the_database_mid_run_costs_nothing(db, stream, config):
     assert count(db, "input_status") == 40, "eventos perdidos al caerse la conexion"
 
 
-def test_one_rejected_event_does_not_block_the_rest_of_its_batch(db, stream, config,
-                                                                 redis_client,
-                                                                 stream_names):
+def test_one_rejected_event_does_not_block_the_rest_of_its_batch(
+    db, stream, config, redis_client, stream_names
+):
     """A tag absent from counters_name violates the foreign key. Retrying it forever
     would stall every event behind it, so it is parked on the rejected stream."""
-    good = [InputEdge(ip=IP8, tag="Cont_P1", ts=ts(10, 0, n), value=bool(n % 2),
-                      reason="change", version=1) for n in range(6)]
-    poison = InputEdge(ip=IP8, tag="NO_EXISTE", version=1, ts=ts(10, 5), value=True,
-                       reason="change")
+    good = [
+        InputEdge(
+            ip=IP8,
+            tag="Cont_P1",
+            ts=ts(10, 0, n),
+            value=bool(n % 2),
+            reason="change",
+            version=1,
+        )
+        for n in range(6)
+    ]
+    poison = InputEdge(
+        ip=IP8, tag="NO_EXISTE", version=1, ts=ts(10, 5), value=True, reason="change"
+    )
     stream.publish_many([*good[:3], poison, *good[3:]])
 
     run_writer(stream, config, until=lambda: count(db, "input_status") == 6)
@@ -255,15 +340,23 @@ def test_isolation_leaves_the_batch_pending_if_the_connection_dies(db, stream, c
     their own redelivery."""
     shutdown = threading.Event()
     writer = Writer(stream, config, shutdown)
-    events = [InputEdge(ip=IP8, tag="Cont_P1", ts=ts(10, 0, n), value=bool(n % 2),
-                        reason="change", version=1) for n in range(8)]
+    events = [
+        InputEdge(
+            ip=IP8,
+            tag="Cont_P1",
+            ts=ts(10, 0, n),
+            value=bool(n % 2),
+            reason="change",
+            version=1,
+        )
+        for n in range(8)
+    ]
 
-    assert writer._isolate(events) is False        # no connection was ever opened
+    assert writer._isolate(events) is False  # no connection was ever opened
     assert count(db, "input_status") == 0
 
 
-def test_a_shutdown_with_the_database_gone_leaves_events_in_the_stream(db, stream,
-                                                                      config):
+def test_a_shutdown_with_the_database_gone_leaves_events_in_the_stream(db, stream, config):
     """Nothing may be silently lost at shutdown: un-acked entries wait in Redis."""
     import dataclasses
 
@@ -312,8 +405,7 @@ def test_counter_addresses_group_onto_the_plc_addresses(db, config):
     assert counter_ips <= plc_ips
 
 
-def test_the_variador_flag_identifies_the_plc_carrying_the_frequency_converter(db,
-                                                                              config):
+def test_the_variador_flag_identifies_the_plc_carrying_the_frequency_converter(db, config):
     repo = Repository.connect(config.db)
     try:
         variadores = [p.ip for p in repo.load_plcs() if p.variador]
@@ -322,8 +414,7 @@ def test_the_variador_flag_identifies_the_plc_carrying_the_frequency_converter(d
     assert variadores == ["172.30.10.9"]
 
 
-def test_a_batch_committed_but_never_acked_is_not_duplicated_on_replay(db, stream,
-                                                                       config):
+def test_a_batch_committed_but_never_acked_is_not_duplicated_on_replay(db, stream, config):
     """The exactly-once claim, made deterministic.
 
     Models a crash between COMMIT and XACK: the rows are already in PostgreSQL and the
@@ -344,12 +435,20 @@ def test_a_batch_committed_but_never_acked_is_not_duplicated_on_replay(db, strea
     finally:
         repo.close()
 
-    before = {t: count(db, t) for t in
-              ("input_status", "paradas", "velocidad", "noria_status",
-               "plc_heartbeat", "generales")}
+    before = {
+        t: count(db, t)
+        for t in (
+            "input_status",
+            "paradas",
+            "velocidad",
+            "noria_status",
+            "plc_heartbeat",
+            "generales",
+        )
+    }
 
     stream.publish_many(events)
-    assert stream.read_new(100, 50)          # delivered, never acked
+    assert stream.read_new(100, 50)  # delivered, never acked
     run_writer(stream, config, until=lambda: stream.pending_count() == 0)
 
     after = {t: count(db, t) for t in before}
@@ -381,14 +480,14 @@ def test_load_counters_returns_only_the_live_version(db, config):
         with db.cursor() as cur:
             cur.execute(
                 f"delete from {SCHEMA}.counters_name where ip = %s and tag = 'Cont_P1' "
-                f"and version = 2", (IP8,),
+                f"and version = 2",
+                (IP8,),
             )
 
 
 def test_an_event_is_stored_against_the_version_it_carries(db, stream, config):
     stream.publish(
-        InputEdge(ip=IP8, tag="Cont_P1", version=1, ts=ts(10), value=True,
-                  reason="change")
+        InputEdge(ip=IP8, tag="Cont_P1", version=1, ts=ts(10), value=True, reason="change")
     )
     run_writer(stream, config, until=lambda: count(db, "input_status") == 1)
     with db.cursor() as cur:

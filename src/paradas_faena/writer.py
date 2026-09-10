@@ -9,10 +9,10 @@ import time
 import psycopg
 from redis.exceptions import RedisError
 
-from .backoff import Backoff
-from .config import Config
-from .db.repository import Repository
-from .events import (
+from paradas_faena.backoff import Backoff
+from paradas_faena.config import Config
+from paradas_faena.db.repository import Repository
+from paradas_faena.events import (
     CounterIncrement,
     Event,
     Heartbeat,
@@ -21,8 +21,8 @@ from .events import (
     SessionClosed,
     SpeedSample,
 )
-from .runner import ManagedThread
-from .stream import EventStream
+from paradas_faena.runner import ManagedThread
+from paradas_faena.stream import EventStream
 
 log = logging.getLogger(__name__)
 
@@ -90,7 +90,9 @@ class Writer(ManagedThread):
         log.info(
             "writer terminado: %d filas escritas, %d eventos rechazados, "
             "%d descartados por buffer lleno",
-            self._written, self._rejected, self._stream.dropped,
+            self._written,
+            self._rejected,
+            self._stream.dropped,
         )
 
     def _next_batch(self, *, draining: bool) -> list[tuple[str, Event]]:
@@ -107,8 +109,9 @@ class Writer(ManagedThread):
             self._repo = Repository.connect(self._cfg.db)
         except psycopg.Error as exc:
             delay = backoff.sleep(self._shutdown)
-            log.error("writer: no se pudo conectar a la db: %s; reintento en ~%.1fs",
-                      exc, delay)
+            log.error(
+                "writer: no se pudo conectar a la db: %s; reintento en ~%.1fs", exc, delay
+            )
             return False
         backoff.reset()
         log.info("writer: conectado a la base de datos")
@@ -128,14 +131,16 @@ class Writer(ManagedThread):
         except _CONNECTION_ERRORS as exc:
             # Not acknowledging is the whole retry mechanism: the entries stay pending in
             # Redis and the next pending read returns exactly them.
-            log.error("writer: conexion perdida con %d eventos en vuelo (%s)",
-                      len(events), exc)
+            log.error(
+                "writer: conexion perdida con %d eventos en vuelo (%s)", len(events), exc
+            )
             self._drop_connection()
             self._maybe_pending = True
             return
         except psycopg.Error as exc:
-            log.error("writer: error de datos en un lote de %d (%s); aislando",
-                      len(events), exc)
+            log.error(
+                "writer: error de datos en un lote de %d (%s); aislando", len(events), exc
+            )
             self._rollback()
             if not self._isolate(events):
                 # Isolation was cut short by a connection failure. Leave the whole batch
@@ -197,15 +202,17 @@ class Writer(ManagedThread):
             try:
                 self._flush(current)
             except _CONNECTION_ERRORS as exc:
-                log.error("writer: conexion perdida aislando %d eventos: %s",
-                          len(current), exc)
+                log.error(
+                    "writer: conexion perdida aislando %d eventos: %s", len(current), exc
+                )
                 self._drop_connection()
                 return False
             except psycopg.Error as exc:
                 self._rollback()
                 if len(current) == 1:
-                    log.error("writer: evento rechazado por la db: %r (%s)",
-                              current[0], exc)
+                    log.error(
+                        "writer: evento rechazado por la db: %r (%s)", current[0], exc
+                    )
                     self._stream.reject(current[0], str(exc))
                     self._rejected += 1
                 else:
@@ -222,6 +229,9 @@ class Writer(ManagedThread):
         log.info(
             "writer: %d filas escritas, pendientes=%d, buffer=%d, "
             "rechazados=%d, descartados=%d",
-            self._written, self._stream.pending_count(), self._stream.buffered,
-            self._rejected, self._stream.dropped,
+            self._written,
+            self._stream.pending_count(),
+            self._stream.buffered,
+            self._rejected,
+            self._stream.dropped,
         )

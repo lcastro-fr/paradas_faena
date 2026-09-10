@@ -8,8 +8,8 @@ from dataclasses import dataclass
 import psycopg
 from psycopg import sql
 
-from ..config import DbConfig
-from ..events import (
+from paradas_faena.config import DbConfig
+from paradas_faena.events import (
     CounterIncrement,
     Heartbeat,
     InputEdge,

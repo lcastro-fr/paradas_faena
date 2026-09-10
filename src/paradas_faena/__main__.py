@@ -12,16 +12,16 @@ import time
 import psycopg
 from redis.exceptions import RedisError
 
-from .backoff import Backoff
-from .config import Config, ConfigError, load_config
-from .db.repository import CounterConfig, PlcConfig, Repository
-from .logging_setup import setup_logging
-from .plc.worker import PlcWorker
-from .runner import ManagedThread
-from .session import StopFileWatcher
-from .state import LineState
-from .stream import EventStream, build_client
-from .writer import Writer
+from paradas_faena.backoff import Backoff
+from paradas_faena.config import Config, ConfigError, load_config
+from paradas_faena.db.repository import CounterConfig, PlcConfig, Repository
+from paradas_faena.logging_setup import setup_logging
+from paradas_faena.plc.worker import PlcWorker
+from paradas_faena.runner import ManagedThread
+from paradas_faena.session import StopFileWatcher
+from paradas_faena.state import LineState
+from paradas_faena.stream import EventStream, build_client
+from paradas_faena.writer import Writer
 
 log = logging.getLogger("paradas_faena")
 
@@ -43,8 +43,9 @@ def load_topology(
             break
         except psycopg.Error as exc:
             delay = backoff.sleep(shutdown)
-            log.error("no se pudo leer la configuracion: %s; reintento en ~%.1fs",
-                      exc, delay)
+            log.error(
+                "no se pudo leer la configuracion: %s; reintento en ~%.1fs", exc, delay
+            )
         finally:
             if repo is not None:
                 repo.close()
@@ -63,9 +64,11 @@ def load_topology(
         mapped = sum(1 for c in by_ip.get(plc.ip, []) if c.input_tag is not None)
         log.info(
             "PLC %s (%s)%s: %d contadores, %d con input_tag, version %s",
-            plc.ip, plc.nombre or "sin nombre",
+            plc.ip,
+            plc.nombre or "sin nombre",
             " [variador]" if plc.variador else "",
-            len(by_ip.get(plc.ip, [])), mapped,
+            len(by_ip.get(plc.ip, [])),
+            mapped,
             sorted({c.version for c in by_ip.get(plc.ip, [])}) or "-",
         )
 
@@ -97,8 +100,12 @@ def build_stream(config: Config, shutdown: threading.Event) -> EventStream | Non
     while not shutdown.is_set():
         try:
             stream.ensure_group()
-            log.info("redis listo: %s grupo=%s consumidor=%s",
-                     config.redis.stream, config.redis.group, config.redis.consumer)
+            log.info(
+                "redis listo: %s grupo=%s consumidor=%s",
+                config.redis.stream,
+                config.redis.group,
+                config.redis.consumer,
+            )
             return stream
         except RedisError as exc:
             delay = backoff.sleep(shutdown)

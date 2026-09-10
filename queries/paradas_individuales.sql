@@ -18,8 +18,8 @@
 with seg as (
     select s.ip, s.tag, cn.name, s.value, s.ts,
            lead(s.ts) over (partition by s.ip, s.tag order by s.ts) as next_ts
-    from paradas_faena.input_status s
-    join paradas_faena.counters_name cn using (ip, tag, version)
+    from monitoreo_faena.input_status s
+    join monitoreo_faena.counters_name cn using (ip, tag, version)
     where s.ts >= %(desde)s - interval '1 hour'
       and s.ts <  %(hasta)s
 ),

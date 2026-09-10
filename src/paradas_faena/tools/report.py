@@ -19,8 +19,8 @@ import datetime as dt
 import pathlib
 import sys
 
-from ..config import Config, ConfigError, load_config
-from ..db.repository import Repository
+from paradas_faena.config import Config, ConfigError, load_config
+from paradas_faena.db.repository import Repository
 
 QUERIES_DIR = pathlib.Path(__file__).resolve().parents[3] / "queries"
 
@@ -48,8 +48,9 @@ def _moment(text: str, day: dt.date) -> dt.datetime:
     return parsed
 
 
-def parameters(sql: str, config: Config, desde: dt.datetime,
-               hasta: dt.datetime) -> dict[str, object]:
+def parameters(
+    sql: str, config: Config, desde: dt.datetime, hasta: dt.datetime
+) -> dict[str, object]:
     """Only what this query actually asks for, so a new query needs no code here."""
     known: dict[str, object] = {
         "desde": desde,
@@ -73,8 +74,7 @@ def _render(headers: list[str], rows: list[tuple], as_csv: bool) -> None:
 
     cells = [[("" if v is None else str(v)) for v in row] for row in rows]
     widths = [
-        max(len(headers[i]), max(len(c[i]) for c in cells))
-        for i in range(len(headers))
+        max(len(headers[i]), max(len(c[i]) for c in cells)) for i in range(len(headers))
     ]
     print("  " + "  ".join(h.ljust(widths[i]) for i, h in enumerate(headers)))
     print("  " + "  ".join("-" * w for w in widths))
@@ -102,8 +102,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {name}")
         return 0
     if args.query not in names:
-        print(f"no existe {args.query!r}. Disponibles: {', '.join(names)}",
-              file=sys.stderr)
+        print(f"no existe {args.query!r}. Disponibles: {', '.join(names)}", file=sys.stderr)
         return 2
 
     day = dt.date.fromisoformat(args.dia) if args.dia else dt.date.today()
