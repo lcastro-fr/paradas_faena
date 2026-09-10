@@ -10,7 +10,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-    network:
+    networks:
       - backend
 
   migrate:
@@ -49,7 +49,7 @@ services:
     logging:
       driver: json-file
       options: { max-size: "20m", max-file: "5" }
-    network:
+    networks:
       - backend
 
 volumes:
