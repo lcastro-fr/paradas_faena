@@ -157,9 +157,9 @@ def main() -> int:
         )
         for plc in plcs
     ]
-    watcher = StopFileWatcher(stream, config, shutdown)
+    # watcher = StopFileWatcher(stream, config, shutdown)
 
-    threads: list[ManagedThread] = [writer, *workers, watcher]
+    threads: list[ManagedThread] = [writer, *workers]  # , watcher]
     for thread in threads:
         thread.start()
 
@@ -172,7 +172,7 @@ def main() -> int:
                 break
 
     deadline = time.monotonic() + config.shutdown_grace_seconds
-    for worker in [*workers, watcher]:
+    for worker in [*workers]:  # , watcher]:
         worker.join(timeout=max(0.5, deadline - time.monotonic()))
     # The writer goes last: it needs the readers stopped before it can drain.
     writer.join(timeout=config.shutdown_grace_seconds + 5.0)
