@@ -48,7 +48,6 @@ def _optional(name: str, default: str) -> str:
     return default if value is None or value == "" else value
 
 
-
 def _float(name: str, default: float, *, minimum: float | None = None) -> float:
     raw = _optional(name, str(default))
     try:
@@ -154,9 +153,7 @@ class Config:
 
         Pass it to the queries as %(max_segment)s; never hardcode an interval in the SQL.
         """
-        return dt.timedelta(
-            seconds=self.reassert_seconds + self.poll_seconds + 1.0
-        )
+        return dt.timedelta(seconds=self.reassert_seconds + self.poll_seconds + 1.0)
 
     def heartbeat_interval(self) -> dt.timedelta:
         return dt.timedelta(seconds=self.heartbeat_seconds)

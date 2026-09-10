@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-import datetime as dt
 import logging
 from dataclasses import dataclass
 
@@ -39,12 +38,6 @@ class CounterConfig:
     # Configuration generation. Rewiring inserts a new version; rows already recorded
     # keep pointing at the one that was true when they were read.
     version: int
-
-
-def local_parts(ts: dt.datetime) -> tuple[dt.date, dt.time]:
-    """Split an observation instant into the local date and time."""
-    local = ts.astimezone()
-    return local.date(), local.time()
 
 
 class Repository:
@@ -112,34 +105,30 @@ class Repository:
     def insert_counters(self, events: list[CounterIncrement]) -> None:
         if not events:
             return
-        params = []
-        for e in events:
-            fecha, hora = local_parts(e.ts)
-            params.append(
-                (
-                    e.ip,
-                    e.tag,
-                    e.version,
-                    e.old_value,
-                    e.new_value,
-                    e.dif,
-                    fecha,
-                    hora,
-                    e.noria_running,
-                    e.vel,
-                    e.event_uid,
-                )
-            )
         with self._conn.cursor() as cur:
             cur.executemany(
                 self._q(
                     "insert into {schema}.paradas "
-                    "(ip, tag, version, old_value, new_value, dif, fecha, hora, "
+                    "(ip, tag, version, old_value, new_value, dif, ts, "
                     " status_noria, vel, event_uid) "
-                    "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                     "on conflict (event_uid) do nothing"
                 ),
-                params,
+                [
+                    (
+                        e.ip,
+                        e.tag,
+                        e.version,
+                        e.old_value,
+                        e.new_value,
+                        e.dif,
+                        e.ts,
+                        e.noria_running,
+                        e.vel,
+                        e.event_uid,
+                    )
+                    for e in events
+                ],
             )
 
     def insert_input_edges(self, events: list[InputEdge]) -> None:
@@ -162,19 +151,15 @@ class Repository:
     def insert_speed(self, events: list[SpeedSample]) -> None:
         if not events:
             return
-        params = []
-        for e in events:
-            fecha, hora = local_parts(e.ts)
-            params.append((fecha, hora, e.frec, e.vel, e.noria_running, e.event_uid))
         with self._conn.cursor() as cur:
             cur.executemany(
                 self._q(
                     "insert into {schema}.velocidad "
-                    "(fecha, hora, frec, vel, status_noria, event_uid) "
-                    "values (%s, %s, %s, %s, %s, %s) "
+                    "(ts, frec, vel, status_noria, event_uid) "
+                    "values (%s, %s, %s, %s, %s) "
                     "on conflict (event_uid) do nothing"
                 ),
-                params,
+                [(e.ts, e.frec, e.vel, e.noria_running, e.event_uid) for e in events],
             )
 
     def insert_noria_status(self, events: list[NoriaStatusEdge]) -> None:

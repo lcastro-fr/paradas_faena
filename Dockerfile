@@ -10,6 +10,8 @@ ENV UV_NO_SYNC=1
 ENV PATH="/opt/venv/bin:$PATH"
 ENV HOME=/tmp
 
+ENV TZ=America/Argentina/Buenos_Aires
+
 WORKDIR /app
 
 COPY pyproject.toml uv.lock* ./

@@ -12,7 +12,7 @@ import time
 
 from tests.conftest import SCHEMA, requires_db, requires_redis, ts
 
-from paradas_faena.db.repository import Repository, local_parts
+from paradas_faena.db.repository import Repository
 from paradas_faena.events import (
     CounterIncrement,
     Heartbeat,
@@ -99,12 +99,15 @@ def test_a_committed_batch_is_acknowledged(db, stream, config):
     assert stream.pending_count() == 0
 
 
+CRUZA_MEDIANOCHE = dt.datetime(2026, 9, 8, 1, 30, tzinfo=dt.UTC)
+
+
 def test_a_stop_lands_with_the_line_state_captured_at_read_time(db, stream, config):
     stream.publish(
         CounterIncrement(
             ip=IP8,
             tag="Cont_P1",
-            ts=ts(10, 0, 0),
+            ts=CRUZA_MEDIANOCHE,
             old_value=4,
             new_value=6,
             dif=2,
@@ -117,13 +120,70 @@ def test_a_stop_lands_with_the_line_state_captured_at_read_time(db, stream, conf
 
     with db.cursor() as cur:
         cur.execute(
-            f"select tag, old_value, new_value, dif, status_noria, vel, fecha, hora "
+            f"select tag, old_value, new_value, dif, status_noria, vel, ts "
             f"from {SCHEMA}.paradas"
         )
         row = cur.fetchone()
-    fecha, hora = local_parts(ts(10, 0, 0))
     assert row[:6] == ("Cont_P1", 4, 6, 2, False, 0.0)
-    assert (row[6], row[7]) == (fecha, hora)
+    assert row[6] == CRUZA_MEDIANOCHE
+
+
+def test_the_stored_instant_does_not_depend_on_who_is_looking(db, stream, config):
+    """What timestamptz buys: storage is zone-free, rendering is the reader's choice.
+
+    Under the old date + time columns the plant's zone was baked into the value, so this
+    property could not hold -- the row read back the same only because every reader
+    happened to assume the same offset.
+    """
+    stream.publish(
+        CounterIncrement(
+            ip=IP8,
+            tag="Cont_P1",
+            ts=CRUZA_MEDIANOCHE,
+            old_value=1,
+            new_value=2,
+            dif=1,
+            noria_running=True,
+            vel=42.0,
+            version=1,
+        )
+    )
+    run_writer(stream, config, until=lambda: count(db, "paradas") == 1)
+
+    seen = []
+    with db.cursor() as cur:
+        try:
+            for zone in ("UTC", "America/Argentina/Buenos_Aires", "Asia/Tokyo"):
+                cur.execute(f"set timezone = '{zone}'")
+                cur.execute(f"select ts from {SCHEMA}.paradas")
+                seen.append(cur.fetchone()[0])
+        finally:
+            cur.execute("set timezone = default")
+
+    assert seen == [CRUZA_MEDIANOCHE] * 3
+    # Same instant, three different renderings -- otherwise the assertion above would be
+    # comparing UTC to UTC and proving nothing.
+    assert {t.utcoffset() for t in seen} == {
+        dt.timedelta(0),
+        dt.timedelta(hours=-3),
+        dt.timedelta(hours=9),
+    }
+
+
+def test_the_backfill_conversion_reads_wall_clock_as_plant_local_time(db):
+    """The expression migration 007 uses to reinterpret the old date + time columns.
+
+    Its UPDATEs are never exercised by the suite -- conftest applies every migration to
+    an empty schema, so they always run against zero rows. This pins the one thing that
+    could silently be wrong: a mistyped zone name (which raises) or a conversion applied
+    in the wrong direction (which would give 2026-09-07 19:30Z).
+    """
+    with db.cursor() as cur:
+        cur.execute(
+            "select (date '2026-09-07' + time '22:30') "
+            "at time zone 'America/Argentina/Buenos_Aires'"
+        )
+        assert cur.fetchone()[0] == CRUZA_MEDIANOCHE
 
 
 def test_unknown_line_state_is_stored_as_null_not_as_a_stale_value(db, stream, config):

@@ -61,18 +61,34 @@ def parameters(
     return {name: value for name, value in known.items() if f"%({name})s" in sql}
 
 
+def _cell(value: object) -> str:
+    """Render one value, timestamps in the plant's local time.
+
+    psycopg decodes timestamptz using the *connection's* session TimeZone, which is
+    whatever the server defaults to -- UTC, on ours. Nothing is wrong with the stored
+    instant; it is just being shown in the wrong zone to someone standing in the plant.
+    The connection stays zone-agnostic (see DbConfig.conninfo) and the choice is made
+    here, where the reading happens: astimezone() with no argument means the process
+    zone, which compose pins to America/Argentina/Buenos_Aires.
+    """
+    if isinstance(value, dt.datetime) and value.tzinfo is not None:
+        value = value.astimezone()
+    return "" if value is None else str(value)
+
+
 def _render(headers: list[str], rows: list[tuple], as_csv: bool) -> None:
+    cells = [[_cell(v) for v in row] for row in rows]
+
     if as_csv:
         writer = csv.writer(sys.stdout)
         writer.writerow(headers)
-        writer.writerows(rows)
+        writer.writerows(cells)
         return
 
     if not rows:
         print("  (sin resultados)")
         return
 
-    cells = [[("" if v is None else str(v)) for v in row] for row in rows]
     widths = [
         max(len(headers[i]), max(len(c[i]) for c in cells)) for i in range(len(headers))
     ]
