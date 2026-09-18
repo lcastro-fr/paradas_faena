@@ -1,0 +1,112 @@
+/* input.css -- fuente de css/app.css, que ESTA COMMITEADO a proposito.
+ *
+ * El runtime no necesita node: app.css se sirve con un <link> y anda sin internet,
+ * que es el requisito real en planta. node hace falta solo para regenerarlo:
+ *
+ *     cd web && npm install && npm run build:css
+ *
+ * El tema claro es el mismo de veps-dtes y control_fletes. El oscuro es el default
+ * aca: es una pantalla de planta prendida todo el dia.
+ */
+@import "tailwindcss" source(none);
+@source "../../templates/**/*.html";
+@source "../../*/templates/**/*.html";
+@source "../js/*.js";
+
+@plugin "daisyui";
+@plugin "daisyui/theme" {
+    name: "light";
+    default: false;
+    prefersdark: false;
+    color-scheme: "light";
+    --color-base-100: oklch(100% 0 0);
+    --color-base-200: oklch(93% 0 0);
+    --color-base-300: oklch(86% 0 0);
+    --color-base-content: oklch(22.389% 0.031 278.072);
+    --color-primary: oklch(58% 0.158 241.966);
+    --color-primary-content: oklch(100% 0 0);
+    --color-secondary: oklch(55% 0.046 257.417);
+    --color-secondary-content: oklch(100% 0 0);
+    --color-accent: oklch(60% 0.118 184.704);
+    --color-accent-content: oklch(100% 0 0);
+    --color-neutral: oklch(0% 0 0);
+    --color-neutral-content: oklch(100% 0 0);
+    --color-info: oklch(60% 0.126 221.723);
+    --color-info-content: oklch(100% 0 0);
+    --color-success: oklch(62% 0.194 149.214);
+    --color-success-content: oklch(100% 0 0);
+    --color-warning: oklch(85% 0.199 91.936);
+    --color-warning-content: oklch(0% 0 0);
+    --color-error: oklch(70% 0.191 22.216);
+    --color-error-content: oklch(0% 0 0);
+    --radius-selector: 0.5rem;
+    --radius-field: 0.5rem;
+    --radius-box: 0.5rem;
+    --size-selector: 0.25rem;
+    --size-field: 0.25rem;
+    --border: 1px;
+    --depth: 0;
+    --noise: 0;
+}
+
+/* El default de esta pantalla. Fondo casi negro para que el rojo de un puesto reteniendo
+   sea lo unico que salta a la vista desde el otro lado de la playa, y para no reflejar
+   los tubos del techo. */
+@plugin "daisyui/theme" {
+    name: "dark";
+    default: true;
+    prefersdark: true;
+    color-scheme: "dark";
+    --color-base-100: oklch(18% 0.008 265);
+    --color-base-200: oklch(24% 0.010 265);
+    --color-base-300: oklch(31% 0.012 265);
+    --color-base-content: oklch(95% 0.005 265);
+    --color-primary: oklch(70% 0.150 242);
+    --color-primary-content: oklch(15% 0.02 242);
+    --color-secondary: oklch(65% 0.040 257);
+    --color-secondary-content: oklch(15% 0.01 257);
+    --color-accent: oklch(72% 0.120 185);
+    --color-accent-content: oklch(15% 0.02 185);
+    --color-neutral: oklch(30% 0.010 265);
+    --color-neutral-content: oklch(95% 0.005 265);
+    --color-info: oklch(72% 0.120 222);
+    --color-info-content: oklch(15% 0.02 222);
+    --color-success: oklch(72% 0.190 149);
+    --color-success-content: oklch(15% 0.03 149);
+    --color-warning: oklch(83% 0.180 92);
+    --color-warning-content: oklch(18% 0.03 92);
+    --color-error: oklch(63% 0.230 25);
+    --color-error-content: oklch(98% 0.01 25);
+    --radius-selector: 0.5rem;
+    --radius-field: 0.5rem;
+    --radius-box: 0.5rem;
+    --size-selector: 0.25rem;
+    --size-field: 0.25rem;
+    --border: 1px;
+    --depth: 0;
+    --noise: 0;
+}
+
+/* Rayado diagonal para "sin datos": a cinco metros el color solo no alcanza para
+   separarlo de "detenida", y el gris se confunde con una pantalla congelada. */
+@utility rayado {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent 0 8px,
+    color-mix(in oklch, currentColor 12%, transparent) 8px 16px
+  );
+}
+
+/* Solo el borde. Un tile entero parpadeando ocho horas se termina ignorando. */
+@utility latiendo {
+  animation: latido 1s ease-in-out infinite;
+}
+
+@keyframes latido {
+  0%, 100% { box-shadow: 0 0 0 4px color-mix(in oklch, var(--color-error) 90%, transparent); }
+  50%      { box-shadow: 0 0 0 4px color-mix(in oklch, var(--color-error) 25%, transparent); }
+}
+
+/* El cronometro de un puesto libre no dice nada urgente: mismo lugar, mucho menos peso,
+   para que lo unico grande en la grilla sea una parada de verdad. */
+.cronometro:not(:has(*)) { font-variant-numeric: tabular-nums; }

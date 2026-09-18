@@ -35,6 +35,19 @@ _ALL = [
     "STATUS_GRACE_SECONDS",
     "SPEED_DEADBAND_HZ",
     "SPEED_MAX_INTERVAL_SECONDS",
+    "PERSIST_LIVE_SPEED",
+    "LIVE_ENABLED",
+    "LIVE_KEY_PREFIX",
+    "LIVE_SPEED_SECONDS",
+    "LIVE_TTL_SECONDS",
+    "LIVE_TIMEOUT_SECONDS",
+    "LIVE_RETRY_SECONDS",
+    "MONITOR_HOST",
+    "MONITOR_PORT",
+    "MONITOR_REFRESH_SECONDS",
+    "MONITOR_HEARTBEAT_SECONDS",
+    "MONITOR_QUEUE_SIZE",
+    "MONITOR_STALE_SECONDS",
     "STOPFILE_POLL_SECONDS",
     "TAG_FREC",
     "TAG_STATUS",
@@ -235,3 +248,22 @@ def test_an_absurdly_small_stream_cap_is_rejected(env):
     """A cap near the batch size would trim entries before the writer could read them."""
     with pytest.raises(ConfigError, match="REDIS_MAXLEN"):
         env(REDIS_MAXLEN="10")
+
+
+def test_live_speed_is_not_persisted_by_default(env):
+    assert env().persist_live_speed is False
+
+
+@pytest.mark.parametrize("raw", ["true", "TRUE", "1", "yes", "on", "si"])
+def test_the_usual_spellings_of_true_are_accepted(env, raw):
+    assert env(PERSIST_LIVE_SPEED=raw).persist_live_speed is True
+
+
+@pytest.mark.parametrize("raw", ["false", "FALSE", "0", "no", "off"])
+def test_the_usual_spellings_of_false_are_accepted(env, raw):
+    assert env(PERSIST_LIVE_SPEED=raw).persist_live_speed is False
+
+
+def test_a_value_that_is_neither_true_nor_false_is_rejected_at_startup(env):
+    with pytest.raises(ConfigError, match="PERSIST_LIVE_SPEED"):
+        env(PERSIST_LIVE_SPEED="quizas")

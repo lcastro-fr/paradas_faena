@@ -17,6 +17,7 @@ from paradas_faena.events import (
     Event,
     Heartbeat,
     InputEdge,
+    LiveSpeed,
     NoriaStatusEdge,
     SessionClosed,
     SpeedSample,
@@ -44,11 +45,16 @@ class Writer(ManagedThread):
         self._repo: Repository | None = None
         self._written = 0
         self._rejected = 0
+        self._discarded_live = 0
         # Starts true so a restart picks up whatever the previous run read but never
         # acknowledged.
         self._maybe_pending = True
         self._redis_down = False
         self._last_stats = time.monotonic()
+
+    @property
+    def discarded_live(self) -> int:
+        return self._discarded_live
 
     def run(self) -> None:
         backoff = Backoff(self._cfg.backoff_initial_seconds, self._cfg.backoff_max_seconds)
@@ -157,7 +163,7 @@ class Writer(ManagedThread):
         assert self._repo is not None
         counters: list[CounterIncrement] = []
         inputs: list[InputEdge] = []
-        speeds: list[SpeedSample] = []
+        speeds: list[SpeedSample | LiveSpeed] = []
         noria: list[NoriaStatusEdge] = []
         beats: list[Heartbeat] = []
         sessions: list[SessionClosed] = []
@@ -169,6 +175,15 @@ class Writer(ManagedThread):
                 beats.append(event)
             elif isinstance(event, SpeedSample):
                 speeds.append(event)
+            elif isinstance(event, LiveSpeed):
+                # Una por tick: persistirlas serian ~86k filas por dia y arruinaria el
+                # promedio ponderado por tiempo de reporting.v_velocidad_franja, que pesa
+                # cada muestra por lo que duro. Viajan por el stream para el monitor y
+                # mueren aca.
+                if self._cfg.persist_live_speed:
+                    speeds.append(event)
+                else:
+                    self._discarded_live += 1
             elif isinstance(event, CounterIncrement):
                 counters.append(event)
             elif isinstance(event, NoriaStatusEdge):
@@ -228,10 +243,11 @@ class Writer(ManagedThread):
         self._last_stats = now
         log.info(
             "writer: %d filas escritas, pendientes=%d, buffer=%d, "
-            "rechazados=%d, descartados=%d",
+            "rechazados=%d, descartados=%d, velocidad viva ignorada=%d",
             self._written,
             self._stream.pending_count(),
             self._stream.buffered,
             self._rejected,
             self._stream.dropped,
+            self._discarded_live,
         )

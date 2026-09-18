@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="es" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block titulo %}Faena{% endblock %}</title>
+  {% load static %}
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <link rel="icon" href="data:,">
+  {% block head %}{% endblock %}
+</head>
+<body class="bg-base-100 text-base-content min-h-screen text-[18px]">
+{% block contenido %}{% endblock %}
+{% block scripts %}{% endblock %}
+</body>
+</html>

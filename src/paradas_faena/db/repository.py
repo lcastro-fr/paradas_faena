@@ -12,6 +12,7 @@ from paradas_faena.events import (
     CounterIncrement,
     Heartbeat,
     InputEdge,
+    LiveSpeed,
     NoriaStatusEdge,
     SessionClosed,
     SpeedSample,
@@ -148,7 +149,7 @@ class Repository:
                 [(e.ip, e.tag, e.version, e.ts, e.value) for e in events],
             )
 
-    def insert_speed(self, events: list[SpeedSample]) -> None:
+    def insert_speed(self, events: list[SpeedSample | LiveSpeed]) -> None:
         if not events:
             return
         with self._conn.cursor() as cur:

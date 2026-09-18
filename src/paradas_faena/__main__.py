@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections
+import datetime as dt
 import logging
 import signal
 import sys
@@ -15,6 +16,7 @@ from redis.exceptions import RedisError
 from paradas_faena.backoff import Backoff
 from paradas_faena.config import Config, ConfigError, load_config
 from paradas_faena.db.repository import CounterConfig, PlcConfig, Repository
+from paradas_faena.live import LiveMirror, build_live_client
 from paradas_faena.logging_setup import setup_logging
 from paradas_faena.plc.worker import PlcWorker
 from paradas_faena.runner import ManagedThread
@@ -113,6 +115,17 @@ def build_stream(config: Config, shutdown: threading.Event) -> EventStream | Non
     return None
 
 
+def build_mirror(config: Config) -> LiveMirror | None:
+    """Unlike build_stream this never waits for Redis: nothing is lost if the mirror
+    starts degraded, and holding up data acquisition for a screen would be a bad trade."""
+    if not config.live.enabled:
+        log.info("espejo vivo deshabilitado (LIVE_ENABLED=false)")
+        return None
+    return LiveMirror(
+        build_live_client(config.redis.url, config.live.timeout_seconds), config.live
+    )
+
+
 def main() -> int:
     try:
         config = load_config()
@@ -146,6 +159,11 @@ def main() -> int:
     writer = Writer(stream, config, shutdown)
     # One shared instance: the variador PLC's worker writes it, every worker reads it.
     line_state = LineState(config.status_grace_seconds)
+    mirror = build_mirror(config)
+    if mirror is not None:
+        mirror.seed(
+            (c.ip, c.tag) for group in counters_by_ip.values() for c in group
+        )
     workers = [
         PlcWorker(
             plc=plc,
@@ -154,6 +172,7 @@ def main() -> int:
             line_state=line_state,
             config=config,
             shutdown=shutdown,
+            mirror=mirror,
         )
         for plc in plcs
     ]
@@ -165,6 +184,10 @@ def main() -> int:
 
     # A thread that dies is a bug: log it and shut down so the container restarts clean.
     while not shutdown.wait(1.0):
+        if mirror is not None:
+            # Its own liveness, so "the daemon died" reads differently from "every PLC
+            # went down at once".
+            mirror.daemon_alive(dt.datetime.now(dt.UTC))
         for thread in threads:
             if not thread.is_alive():
                 log.critical("el hilo %s murio, cerrando el proceso", thread.name)
@@ -176,6 +199,9 @@ def main() -> int:
         worker.join(timeout=max(0.5, deadline - time.monotonic()))
     # The writer goes last: it needs the readers stopped before it can drain.
     writer.join(timeout=config.shutdown_grace_seconds + 5.0)
+
+    if mirror is not None:
+        mirror.daemon_down()
 
     still_running = [t.name for t in threads if t.is_alive()]
     if still_running:

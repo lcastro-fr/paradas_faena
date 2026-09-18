@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block titulo %}Monitor de paradas{% endblock %}
+
+{% block contenido %}
+<!-- Nunca tapa los datos: dice que dejaron de moverse. -->
+<div id="aviso" class="hidden sticky top-0 z-30 px-4 py-2 text-center font-bold tracking-wide"></div>
+
+<header class="px-4 pt-4 pb-3 border-b border-base-300">
+  <div class="flex flex-wrap items-end gap-x-8 gap-y-3">
+    <div>
+      <div class="text-sm uppercase tracking-widest opacity-60">Noria</div>
+      <div class="flex items-baseline gap-3">
+        <span id="vel" class="font-black tabular-nums leading-none"
+              style="font-size: clamp(3.5rem, 11vw, 8rem)">--</span>
+        <span class="text-2xl opacity-70">cab/h</span>
+      </div>
+    </div>
+
+    <div class="flex flex-col gap-2">
+      <span id="estado-noria" class="badge badge-lg badge-ghost text-lg py-4 font-bold">SIN DATOS</span>
+      <span id="frec" class="text-lg opacity-70 tabular-nums">-- Hz</span>
+    </div>
+
+    <div class="flex-1 min-w-[12rem]">
+      <div class="flex justify-between text-sm opacity-60 mb-1">
+        <span>objetivo <span id="objetivo" class="tabular-nums">220</span></span>
+        <span id="cumplimiento" class="tabular-nums"></span>
+      </div>
+      <!-- Barra propia y no <progress>: el elemento nativo depende de pseudo-elementos
+           por motor y de si el atributo `value` esta presente, y un ancho explicito se
+           comporta igual en cualquier pantalla que nos pongan en planta. -->
+      <div class="w-full h-4 rounded-full bg-base-300 overflow-hidden relative">
+        <!-- Sin transicion: con una lectura por segundo la barra estaria siempre animando,
+             y una animacion de 150 ms sobre un dato de 1 Hz solo agrega retraso. -->
+        <div id="barra" class="h-full bg-primary"
+             style="width: 0%"></div>
+        <div class="absolute inset-y-0 w-0.5 bg-base-content/60" style="left: 100%"></div>
+      </div>
+    </div>
+
+    <div class="text-right">
+      <div id="reloj" class="text-3xl font-bold tabular-nums">--:--:--</div>
+      <div id="plcs" class="flex gap-2 justify-end mt-1"></div>
+    </div>
+  </div>
+</header>
+
+<section class="grid grid-cols-3 gap-px bg-base-300 border-b border-base-300">
+  <div class="bg-base-100 px-4 py-3">
+    <div class="text-xs uppercase tracking-widest opacity-60">Pidiendo parada</div>
+    <div id="total-activos" class="text-4xl font-black tabular-nums">0</div>
+  </div>
+  <div class="bg-base-100 px-4 py-3">
+    <div class="text-xs uppercase tracking-widest opacity-60">Parada hoy</div>
+    <div id="total-tiempo" class="text-4xl font-black tabular-nums">0:00</div>
+  </div>
+  <div class="bg-base-100 px-4 py-3">
+    <div class="text-xs uppercase tracking-widest opacity-60">Paradas hoy</div>
+    <div id="total-paradas" class="text-4xl font-black tabular-nums">0</div>
+  </div>
+</section>
+
+<main id="grilla" class="p-3 grid gap-3"
+      style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr))"></main>
+
+<footer id="pie" class="px-4 py-3 text-sm opacity-60 border-t border-base-300"></footer>
+{% endblock %}
+
+{% block scripts %}
+<script src="{% static 'js/monitor.js' %}"></script>
+{% endblock %}

@@ -104,3 +104,53 @@ select count(*) filter (where offset_sin_configurar) as sin_configurar,
             then 'OK' else 'PENDIENTE: relevar orden_linea' end as resultado
 from reporting.v_dim_puesto
 where es_version_vigente;
+
+\echo ''
+\echo '== 11. v_monitor_hoy cuenta las mismas paradas que v_parada en el turno =='
+-- Esta es LA comparacion que importa: el monitor y el tablero tienen que hablar de las
+-- mismas paradas. v_monitor_hoy repite la logica de islas de v_parada (con el filtro de
+-- fecha antes de la window function, que es lo que la hace barata), asi que sin este
+-- chequeo las dos pueden separarse sin que nadie se entere.
+--
+-- Se comparan contra la MISMA ventana: desde monitor_hora_inicio de hoy. Ojo que
+-- v_parada no tiene esa nocion -- filtra por en_jornada, que sale del tipificador -- asi
+-- que el recorte se hace aca a mano sobre inicio_local.
+--
+-- Si esto falla en vivo por uno o dos, mirar la hora: el monitor lee now() en cada
+-- consulta y una parada puede haber arrancado entre las dos mitades de la comparacion.
+with corte as (
+    select (date_trunc('day', now() at time zone p.tz)
+            + p.monitor_hora_inicio) as desde
+    from reporting.v_parametros p
+),
+tablero as (
+    select count(*)                          as paradas,
+           coalesce(sum(v.duracion_s), 0)    as segundos
+    from reporting.v_parada v
+    cross join corte c
+    where v.inicio_local >= c.desde
+),
+monitor as (
+    select coalesce(sum(paradas_hoy), 0)  as paradas,
+           coalesce(sum(segundos_hoy), 0) as segundos
+    from reporting.v_monitor_hoy
+)
+select m.paradas as monitor_paradas, t.paradas as tablero_paradas,
+       round(m.segundos) as monitor_s, round(t.segundos) as tablero_s,
+       case when m.paradas = t.paradas and round(m.segundos) = round(t.segundos)
+            then 'OK' else 'FALLA' end as resultado
+from monitor m cross join tablero t;
+
+\echo ''
+\echo '== 12. Lo que queda afuera por empezar antes del turno =='
+-- No es una falla: es la diferencia entre mirar el dia y mirar el turno, y conviene
+-- tenerla a la vista. Un rele olvidado de madrugada puede ser la mayor parte del dia.
+select count(*)                                   as paradas_fuera_del_turno,
+       round(coalesce(sum(v.duracion_s), 0))      as segundos_fuera_del_turno,
+       max(v.puesto)                              as ejemplo_puesto
+from reporting.v_parada v
+cross join (select (date_trunc('day', now() at time zone p.tz)
+                    + p.monitor_hora_inicio) as desde
+            from reporting.v_parametros p) c
+where v.fecha_faena = (now() at time zone (select tz from reporting.v_parametros))::date
+  and v.inicio_local < c.desde;

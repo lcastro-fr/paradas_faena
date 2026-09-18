@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "paradas-faena"
 version = "2.0.0"
 description = "Daemon que registra pedidos de parada de linea y velocidad desde los PLCs de faena"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "pycomm3>=1.2.14",
     "psycopg[binary]>=3.1",
@@ -15,7 +15,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+# El tier web. Se instala con `uv sync --extra web`; el daemon no lo necesita.
+web = [
+    "django>=6.0",
+    "django-allauth[socialaccount]>=65",
+    "django-cotton>=2.7",
+    "uvicorn[standard]>=0.30",
+    "whitenoise>=6.0",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-django>=4.9",
+    "httpx>=0.27",
+]
 
 [project.scripts]
 paradas-faena = "paradas_faena.__main__:main"
@@ -24,13 +37,25 @@ dump-inputs = "paradas_faena.tools.dump_inputs:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+
 [tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
+pythonpath = ["src", "web"]
+testpaths = ["tests", "web"]
+DJANGO_SETTINGS_MODULE = "config.settings"
+# Estricto a proposito: en modo "auto" pytest-asyncio toma el control del loop y el
+# TestClient de Starlette, que levanta su propio portal, se traba esperandolo.
+asyncio_mode = "strict"
 
 [tool.ruff]
 line-length = 92
-src = ["src", "tests"]
+src = ["src", "tests", "web"]
+# Las migraciones de Django las genera makemigrations; no se editan a mano.
+extend-exclude = ["**/migrations/*"]
+
+[tool.ruff.lint.per-file-ignores]
+# Meta y REQUIRED_FIELDS son convenciones que Django introspecciona: anotarlas como
+# ClassVar no cambia nada y se lee peor.
+"web/**/models.py" = ["RUF012"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF"]

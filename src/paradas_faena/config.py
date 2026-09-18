@@ -59,6 +59,19 @@ def _float(name: str, default: float, *, minimum: float | None = None) -> float:
     return value
 
 
+_TRUE = {"1", "true", "yes", "on", "si"}
+_FALSE = {"0", "false", "no", "off"}
+
+
+def _bool(name: str, default: bool) -> bool:
+    raw = _optional(name, "true" if default else "false").lower()
+    if raw in _TRUE:
+        return True
+    if raw in _FALSE:
+        return False
+    raise ConfigError(f"{name}={raw!r} no es un booleano; use true o false")
+
+
 def _int(name: str, default: int, *, minimum: int | None = None) -> int:
     raw = _optional(name, str(default))
     try:
@@ -105,9 +118,78 @@ class RedisConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class LiveConfig:
+    """The ephemeral mirror the live monitor reads.
+
+    Deliberately separate from RedisConfig: that one carries the durable path, where an
+    event not delivered is an event lost. Here a write that fails is simply skipped --
+    see live.LiveMirror.
+    """
+
+    enabled: bool
+    key_prefix: str
+    speed_seconds: float
+    ttl_seconds: float
+    timeout_seconds: float
+    retry_seconds: float
+
+    @classmethod
+    def from_env(cls, poll_seconds: float) -> LiveConfig:
+        """Tambien la usa la app web, que necesita el layout de claves del espejo."""
+        return cls(
+            enabled=_bool("LIVE_ENABLED", True),
+            key_prefix=_optional("LIVE_KEY_PREFIX", "paradas:live"),
+            speed_seconds=_float("LIVE_SPEED_SECONDS", 1.0, minimum=0.0),
+            # Derivado de poll por el mismo motivo que max_segment(): la caida de un PLC
+            # se detecta porque su clave vence, asi que el TTL tiene que sobrevivir a un
+            # par de ciclos. Un default fijo se rompe solo en cuanto POLL_SECONDS crece.
+            ttl_seconds=_float(
+                "LIVE_TTL_SECONDS", max(5.0, 3.0 * poll_seconds), minimum=1.0
+            ),
+            # Corto a proposito: el cliente durable usa 2 s, y a ese timeout un Redis
+            # caido le comeria dos segundos a cada tick de un segundo.
+            timeout_seconds=_float("LIVE_TIMEOUT_SECONDS", 0.5, minimum=0.05),
+            retry_seconds=_float("LIVE_RETRY_SECONDS", 5.0, minimum=0.0),
+        )
+
+    @property
+    def noria_key(self) -> str:
+        return f"{self.key_prefix}:noria"
+
+    @property
+    def puestos_key(self) -> str:
+        return f"{self.key_prefix}:puestos"
+
+    @property
+    def daemon_key(self) -> str:
+        return f"{self.key_prefix}:daemon"
+
+    def plc_key(self, ip: str) -> str:
+        return f"{self.key_prefix}:plc:{ip}"
+
+
+@dataclass(frozen=True, slots=True)
+class MonitorConfig:
+    """The live monitor's own settings. Every one has a default, so adding this never
+    gives the daemon a new way to fail at startup."""
+
+    host: str
+    port: int
+    # Los acumulados del dia solo se mueven cuando CIERRA una parada, y al lado hay un
+    # cronometro vivo: refrescarlos mas seguido serian miles de consultas por dia sin
+    # ninguna diferencia visible.
+    refresh_seconds: float
+    heartbeat_seconds: float
+    queue_size: int
+    stale_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     db: DbConfig
     redis: RedisConfig
+    live: LiveConfig
+    monitor: MonitorConfig
 
     frec_tag: str
     status_tag: str
@@ -120,6 +202,9 @@ class Config:
     noria_conv: float
     speed_deadband_hz: float
     speed_max_interval_seconds: float
+    # Las muestras de LiveSpeed son para la pantalla, no para la serie historica: el
+    # writer las descarta salvo que esto diga lo contrario.
+    persist_live_speed: bool
 
     edu_path: Path
     stopfile_poll_seconds: float
@@ -181,7 +266,10 @@ def load_config(*, dotenv: bool = True) -> Config:
         # Must be stable across restarts, or entries read but never acknowledged are
         # orphaned under a consumer name nothing will ever read again.
         consumer=_optional("REDIS_CONSUMER", "writer"),
-        maxlen=_int("REDIS_MAXLEN", 100_000, minimum=1000),
+        # Con LiveSpeed a 1 Hz entran ~86k entradas por dia ademas de las durables. Con
+        # el tope viejo de 100k el colchon ante un writer caido bajaba de ~17 dias a poco
+        # mas de uno, y pasado eso Redis evicciona filas que nadie escribio todavia.
+        maxlen=_int("REDIS_MAXLEN", 1_000_000, minimum=1000),
         block_ms=_int("REDIS_BLOCK_MS", 1000, minimum=10),
         buffer_size=_int("PUBLISH_BUFFER_SIZE", 5000, minimum=10),
     )
@@ -193,9 +281,29 @@ def load_config(*, dotenv: bool = True) -> Config:
             f"REASSERT_SECONDS={reassert} debe ser mayor que POLL_SECONDS={poll}"
         )
 
+    live = LiveConfig.from_env(poll)
+    # El default ya cumple esto; la validacion es para un LIVE_TTL_SECONDS puesto a mano
+    # demasiado corto, que venceria en un tick lento sin que hubiera pasado nada y haria
+    # parpadear la pantalla.
+    if live.enabled and live.ttl_seconds < 2 * poll:
+        raise ConfigError(
+            f"LIVE_TTL_SECONDS={live.ttl_seconds} debe ser >= 2*POLL_SECONDS={2 * poll}"
+        )
+
+    monitor = MonitorConfig(
+        host=_optional("MONITOR_HOST", "0.0.0.0"),
+        port=_int("MONITOR_PORT", 8080, minimum=1),
+        refresh_seconds=_float("MONITOR_REFRESH_SECONDS", 60.0, minimum=1.0),
+        heartbeat_seconds=_float("MONITOR_HEARTBEAT_SECONDS", 5.0, minimum=1.0),
+        queue_size=_int("MONITOR_QUEUE_SIZE", 200, minimum=1),
+        stale_seconds=_float("MONITOR_STALE_SECONDS", 15.0, minimum=1.0),
+    )
+
     return Config(
         db=db,
         redis=redis_config,
+        live=live,
+        monitor=monitor,
         frec_tag=_optional("TAG_FREC", "frec"),
         status_tag=_optional("TAG_STATUS", "status"),
         poll_seconds=poll,
@@ -205,6 +313,7 @@ def load_config(*, dotenv: bool = True) -> Config:
         noria_conv=_float("NORIA_CONV", 4.23),
         speed_deadband_hz=_float("SPEED_DEADBAND_HZ", 0.2, minimum=0.0),
         speed_max_interval_seconds=_float("SPEED_MAX_INTERVAL_SECONDS", 60.0, minimum=1.0),
+        persist_live_speed=_bool("PERSIST_LIVE_SPEED", False),
         edu_path=Path(_require("EDU_PATH")),
         stopfile_poll_seconds=_float("STOPFILE_POLL_SECONDS", 30.0, minimum=1.0),
         batch_max_events=_int("BATCH_MAX_EVENTS", 500, minimum=1),

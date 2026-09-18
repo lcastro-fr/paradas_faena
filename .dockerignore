@@ -1,0 +1,26 @@
+# Docker no mira .gitignore: sin esto, los 25 MB de node_modules de Tailwind terminan
+# dentro de la imagen de produccion. El CSS ya viene compilado en static/css/app.css.
+**/node_modules/
+**/package-lock.json
+
+.git/
+.claude/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Credenciales: la imagen se construye con el entorno, no con el .env.
+.env
+.env.*
+!.env.example
+
+tests/
+legacy/
+*.log

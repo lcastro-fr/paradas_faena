@@ -19,3 +19,10 @@ dist/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+
+# Frontend — app.css SI se commitea (el runtime no necesita node); esto no.
+node_modules/
+package-lock.json
+
+# Django — collectstatic lo regenera en cada build.
+web/staticfiles/

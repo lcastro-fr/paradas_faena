@@ -9,6 +9,8 @@ from collections.abc import Callable, Sequence
 from paradas_faena.backoff import Backoff
 from paradas_faena.config import Config
 from paradas_faena.db.repository import CounterConfig, PlcConfig
+from paradas_faena.events import LiveSpeed
+from paradas_faena.live import LiveMirror, LiveSpeedTracker
 from paradas_faena.plc.client import PlcClient, PlcReadError
 from paradas_faena.plc.trackers import (
     CounterTracker,
@@ -35,6 +37,7 @@ class PlcWorker(ManagedThread):
         config: Config,
         shutdown: threading.Event,
         client_factory: Callable[[str], PlcClient] = PlcClient,
+        mirror: LiveMirror | None = None,
     ) -> None:
         super().__init__(f"plc-{plc.ip}")
         self.plc = plc
@@ -43,6 +46,7 @@ class PlcWorker(ManagedThread):
         self._line = line_state
         self._cfg = config
         self._shutdown = shutdown
+        self._mirror = mirror
 
         # tag -> live config version, and input tag -> (counter tag, version)
         self._counter_versions = {c.tag: c.version for c in counters}
@@ -63,6 +67,13 @@ class PlcWorker(ManagedThread):
                 config.speed_max_interval_seconds,
             )
             if plc.variador
+            else None
+        )
+        # Separate from SpeedTracker on purpose: that one is sparse because it feeds a
+        # time-weighted average, this one keeps a gauge moving.
+        self._live_speed = (
+            LiveSpeedTracker(plc.ip, config.noria_conv, config.live.speed_seconds)
+            if plc.variador and mirror is not None
             else None
         )
 
@@ -107,6 +118,12 @@ class PlcWorker(ManagedThread):
     def _on_disconnect(self) -> None:
         if self.plc.variador:
             self._line.invalidate()
+        if self._mirror is not None:
+            # Say it now rather than let the liveness key time out: the link drops about
+            # 1.5 times an hour, and five seconds of a wrong screen each time adds up.
+            self._mirror.plc_down(
+                self.plc.ip, dt.datetime.now(dt.UTC), variador=self.plc.variador
+            )
 
     def _resync(self) -> None:
         self._counters.reset()
@@ -116,6 +133,8 @@ class PlcWorker(ManagedThread):
             self._status.reset()
         if self._speed is not None:
             self._speed.reset()
+        if self._live_speed is not None:
+            self._live_speed.reset()
 
     def _poll_loop(self, client: PlcClient) -> None:
         interval = self._cfg.poll_seconds
@@ -158,15 +177,28 @@ class PlcWorker(ManagedThread):
 
         noria_running, vel = self._line.snapshot(ts)
 
+        live: LiveSpeed | None = None
         if self._speed is not None and frec is not None:
             self._stream.publish_many(self._speed.observe(frec, ts, noria_running))
+            if self._live_speed is not None:
+                # Rides the durable stream like any other event; the writer drops it.
+                samples = self._live_speed.observe(frec, ts, noria_running)
+                self._stream.publish_many(samples)
+                live = samples[0] if samples else None
 
         counter_values = {tag: values[tag] for tag in self._counter_tags}
         self._stream.publish_many(
             self._counters.observe(counter_values, ts, noria_running, vel)
         )
 
-        if self._input_bindings:
-            self._stream.publish_many(self._inputs.observe(values, ts))
+        input_events = self._inputs.observe(values, ts) if self._input_bindings else []
+        self._stream.publish_many(input_events)
 
         self._stream.publish_many(self._heartbeat.observe(ts))
+
+        if self._mirror is not None:
+            # Con lo que los trackers ya produjeron: hereda la inversion del rele, la
+            # deteccion de flanco y el re-assert sin repetir una linea.
+            self._mirror.tick(
+                self.plc.ip, ts, line=live, input_edges=input_events
+            )

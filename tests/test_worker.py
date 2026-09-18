@@ -19,6 +19,7 @@ from paradas_faena.events import (
     CounterIncrement,
     Heartbeat,
     InputEdge,
+    LiveSpeed,
     NoriaStatusEdge,
     SpeedSample,
 )
@@ -85,7 +86,7 @@ def fast_config(config: Config, **overrides) -> Config:
     )
 
 
-def make_worker(plc, counters, fake, stream, config, **overrides):
+def make_worker(plc, counters, fake, stream, config, *, mirror=None, **overrides):
     return PlcWorker(
         plc=plc,
         counters=counters,
@@ -94,6 +95,7 @@ def make_worker(plc, counters, fake, stream, config, **overrides):
         config=fast_config(config, **overrides),
         shutdown=threading.Event(),
         client_factory=lambda ip: fake,
+        mirror=mirror,
     )
 
 
@@ -285,3 +287,94 @@ def test_the_worker_thread_reconnects_and_then_exits_on_shutdown(stream, config)
 
     assert not worker.is_alive()
     assert len(attempts) > 1, "el worker no reintento la conexion"
+
+
+# --- the live mirror ------------------------------------------------------------------
+
+
+class FakeMirror:
+    """Records what the worker hands the mirror, and can be told to misbehave."""
+
+    def __init__(self, explode: bool = False) -> None:
+        self.ticks: list[dict] = []
+        self.downs: list[tuple[str, bool]] = []
+        self._explode = explode
+
+    def tick(self, ip, ts, *, line=None, input_edges=()):
+        if self._explode:
+            raise RuntimeError("redis se cayo de la peor manera")
+        self.ticks.append({"ip": ip, "line": line, "edges": list(input_edges)})
+
+    def plc_down(self, ip, ts, *, variador):
+        self.downs.append((ip, variador))
+
+
+def test_the_mirror_gets_the_same_edges_that_go_to_the_stream(stream, config):
+    """It consumes what the tracker already produced, so it inherits the relay
+    inversion, the edge detection and the re-assert without repeating any of it."""
+    fake = FakePlc(
+        IP8,
+        [{"Cont_P1": 5, "Cont_P2": 2, "_IO_EM_DI_00": True, "_IO_EM_DI_01": False}],
+    )
+    mirror = FakeMirror()
+    worker = make_worker(PLC_8, COUNTERS_8, fake, stream, config, mirror=mirror)
+
+    worker._resync()
+    worker._tick(fake)
+
+    published_edges = [e for e in published(stream) if isinstance(e, InputEdge)]
+    assert mirror.ticks[0]["edges"] == published_edges
+
+
+def test_a_non_variador_plc_mirrors_no_line_reading(stream, config):
+    fake = FakePlc(
+        IP8,
+        [{"Cont_P1": 5, "Cont_P2": 2, "_IO_EM_DI_00": True, "_IO_EM_DI_01": True}],
+    )
+    mirror = FakeMirror()
+    worker = make_worker(PLC_8, COUNTERS_8, fake, stream, config, mirror=mirror)
+
+    worker._resync()
+    worker._tick(fake)
+    assert mirror.ticks[0]["line"] is None
+
+
+def test_the_variador_publishes_a_live_speed_every_tick(stream, config):
+    """SpeedTracker's deadband would leave the gauge frozen; this one must not."""
+    reading = {"Cont_P3": 1, "_IO_P1_DI_00": True, "frec": 49.8, "status": True}
+    fake = FakePlc(IP9, [reading, dict(reading), dict(reading)])
+    mirror = FakeMirror()
+    worker = make_worker(PLC_9, COUNTERS_9, fake, stream, config, mirror=mirror)
+
+    worker._resync()
+    for _ in range(3):
+        worker._tick(fake)
+
+    live = [e for e in published(stream) if isinstance(e, LiveSpeed)]
+    assert len(live) == 3
+    assert live[0].vel == pytest.approx(49.8 * 4.23)
+    # Round-tripped through Redis, so equal rather than the same object.
+    assert mirror.ticks[0]["line"] == live[0]
+
+
+def test_a_failing_mirror_does_not_stall_the_poll_loop(stream, config):
+    """The try/except belongs inside the mirror. If it ever moves out, the PLC thread
+    dies and the supervisor takes the whole process with it."""
+    reading = {"Cont_P1": 5, "Cont_P2": 2, "_IO_EM_DI_00": True, "_IO_EM_DI_01": True}
+    fake = FakePlc(IP8, [reading, dict(reading)])
+    worker = make_worker(
+        PLC_8, COUNTERS_8, fake, stream, config, mirror=FakeMirror(explode=True)
+    )
+
+    worker._resync()
+    with pytest.raises(RuntimeError):
+        worker._tick(fake)
+    # Everything before the mirror still made it out.
+    assert any(isinstance(e, InputEdge) for e in published(stream))
+
+
+def test_a_disconnect_tells_the_mirror_which_plc_went_down(stream, config):
+    mirror = FakeMirror()
+    worker = make_worker(PLC_9, COUNTERS_9, FakePlc(IP9), stream, config, mirror=mirror)
+    worker._on_disconnect()
+    assert mirror.downs == [(IP9, True)]

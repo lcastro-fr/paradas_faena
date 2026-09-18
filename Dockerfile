@@ -16,7 +16,7 @@ WORKDIR /app
 
 COPY pyproject.toml uv.lock* ./
 COPY src/ ./src/
-RUN uv sync --locked && rm -rf /tmp/uv-cache
+RUN uv sync --locked --extra web && rm -rf /tmp/uv-cache
 
 
 
@@ -25,5 +25,11 @@ USER faena
 
 COPY migrations/ ./migrations/
 COPY queries/ ./queries/
+# apply_reporting las lee desde ./reporting, al lado de web/.
+COPY reporting/ ./reporting/
+COPY web/ ./web/
+
+# Documental: la web escucha aca. El daemon no publica ningun puerto.
+EXPOSE 8080
 
 ENTRYPOINT ["uv", "run", "paradas-faena"]

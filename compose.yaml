@@ -52,6 +52,56 @@ services:
     networks:
       - backend
 
+  reporting:
+    build: .
+    image: paradas-faena:2.0.0
+    entrypoint: ["uv", "run", "python", "web/manage.py", "apply_reporting"]
+    restart: "no"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      TZ: America/Argentina/Buenos_Aires
+      DJANGO_SETTINGS_MODULE: config.settings
+    env_file: [.env]
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+    networks:
+      - backend
+
+  web:
+    build: .
+    image: paradas-faena:2.0.0
+    entrypoint: ["uv", "run", "uvicorn", "config.asgi:application",
+                 "--app-dir", "web", "--host", "0.0.0.0", "--port", "8080"]
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      reporting:
+        condition: service_completed_successfully
+    environment:
+      TZ: America/Argentina/Buenos_Aires
+      REDIS_URL: redis://redis:6379/0
+      DJANGO_SETTINGS_MODULE: config.settings
+    env_file: [.env]
+    ports:
+      - "${MONITOR_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    stop_grace_period: 10s
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+    networks:
+      - backend
+
 volumes:
   redis-data:
 

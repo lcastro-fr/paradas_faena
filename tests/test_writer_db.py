@@ -6,6 +6,7 @@ must not duplicate rows, and one bad event must not wedge everything behind it.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import threading
 import time
@@ -17,6 +18,7 @@ from paradas_faena.events import (
     CounterIncrement,
     Heartbeat,
     InputEdge,
+    LiveSpeed,
     NoriaStatusEdge,
     SessionClosed,
     SpeedSample,
@@ -553,3 +555,55 @@ def test_an_event_is_stored_against_the_version_it_carries(db, stream, config):
     with db.cursor() as cur:
         cur.execute(f"select version from {SCHEMA}.input_status")
         assert cur.fetchone() == (1,)
+
+
+def live_speed(ts_value=None):
+    return LiveSpeed(
+        ip="172.30.10.9",
+        ts=ts_value or ts(10, 0, 1),
+        frec=10.0,
+        vel=42.3,
+        noria_running=True,
+    )
+
+
+def test_live_speed_is_discarded_instead_of_persisted(db, stream, config):
+    """One per tick would be ~86k rows a day, and reporting.v_velocidad_franja weighs
+    each sample by how long it lasted -- flooding it would quietly wreck the average."""
+    stream.publish_many([live_speed(), Heartbeat(ip=IP8, ts=ts(10, 0, 0))])
+    writer = run_writer(stream, config, until=lambda: count(db, "plc_heartbeat") == 1)
+
+    assert count(db, "velocidad") == 0
+    assert writer.discarded_live == 1
+
+
+def test_a_discarded_live_speed_is_still_acknowledged(db, stream, config):
+    """Dropping it must not leave the entry pending, or the group never moves on."""
+    stream.publish_many([live_speed(), Heartbeat(ip=IP8, ts=ts(10, 0, 0))])
+    run_writer(stream, config, until=lambda: count(db, "plc_heartbeat") == 1)
+    assert stream.pending_count() == 0
+
+
+def test_persist_live_speed_routes_it_to_the_velocidad_table(db, stream, config):
+    persisting = dataclasses.replace(config, persist_live_speed=True)
+    stream.publish(live_speed())
+    run_writer(stream, persisting, until=lambda: count(db, "velocidad") == 1)
+
+    with db.cursor() as cur:
+        cur.execute(f"select frec, vel, status_noria from {SCHEMA}.velocidad")
+        assert cur.fetchone() == (10.0, 42.3, True)
+
+
+def test_a_sparse_sample_and_a_live_one_do_not_collide(db, stream, config):
+    """Both carry their own event_uid, so persisting both is two rows, not a conflict."""
+    persisting = dataclasses.replace(config, persist_live_speed=True)
+    stream.publish_many(
+        [
+            SpeedSample(
+                ip="172.30.10.9", ts=ts(10, 0, 0), frec=10.0, vel=42.3, noria_running=True
+            ),
+            live_speed(),
+        ]
+    )
+    run_writer(stream, persisting, until=lambda: count(db, "velocidad") == 2)
+    assert count(db, "velocidad") == 2

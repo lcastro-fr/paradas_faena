@@ -75,6 +75,25 @@ class SpeedSample(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class LiveSpeed(Event):
+    """The variador reading for this tick, for the live monitor.
+
+    Same shape as SpeedSample so persisting one is the same insert, but emitted every
+    tick instead of on a deadband: a gauge needs the value the line is running at now.
+    The writer drops it unless PERSIST_LIVE_SPEED says otherwise.
+    """
+
+    kind: ClassVar[str] = "speed_live"
+
+    ip: str
+    ts: dt.datetime
+    frec: float
+    vel: float
+    noria_running: bool | None
+    event_uid: str = field(default_factory=new_uid)
+
+
+@dataclass(frozen=True, slots=True)
 class NoriaStatusEdge(Event):
     kind: ClassVar[str] = "noria"
 
@@ -109,6 +128,7 @@ _KINDS: dict[str, type[Event]] = {
         CounterIncrement,
         InputEdge,
         SpeedSample,
+        LiveSpeed,
         NoriaStatusEdge,
         Heartbeat,
         SessionClosed,
